@@ -96,12 +96,11 @@ const connectWithRetry = async (retries = 5, delay = 5000) => {
   console.log(`📊 Attempting to connect to MongoDB... (${retries} retries left)`);
   
   try {
+    // FIXED: Removed deprecated options (useNewUrlParser, useUnifiedTopology)
     await mongoose.connect(mongoURI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 30000, // 30 seconds
-      socketTimeoutMS: 45000, // 45 seconds
-      connectTimeoutMS: 30000, // 30 seconds
+      serverSelectionTimeoutMS: 30000,
+      socketTimeoutMS: 45000,
+      connectTimeoutMS: 30000,
       maxPoolSize: 10,
       minPoolSize: 2,
     });
