@@ -2,340 +2,346 @@
 import express from 'express';
 import Client from '../models/Client.js';
 import CareTaker from '../models/ClientHandlers.js';
+import multer from 'multer';
+import { v2 as cloudinary } from 'cloudinary';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
+
+// Configure Cloudinary using environment variables
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+  secure: true
+});
+
+console.log('Cloudinary configured with:', {
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY ? '✅ Set' : '❌ Missing',
+  api_secret: process.env.CLOUDINARY_API_SECRET ? '✅ Set' : '❌ Missing'
+});
 
 const router = express.Router();
 
-// Helper: Generate username
-const generateUsername = (businessName) => {
-  const prefix = businessName.substring(0, 3).toUpperCase();
-  const randomNum = Math.floor(1000 + Math.random() * 9000);
-  return `${prefix}${randomNum}`;
-};
-
-// Helper: Generate password
-const generatePassword = () => {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%';
-  let password = '';
-  for (let i = 0; i < 10; i++) {
-    password += chars.charAt(Math.floor(Math.random() * chars.length));
+// Configure multer for memory storage
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/gif', 'application/pdf'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only JPEG, PNG, JPG, GIF, and PDF are allowed.'));
+    }
   }
-  return password;
-};
+});
 
 // ===== CARE TAKER ROUTES =====
-// GET - Get all care takers
+
+// GET all caretakers
 router.get('/caretakers', async (req, res) => {
   try {
     const caretakers = await CareTaker.find({ isActive: true });
-    res.status(200).json({
-      success: true,
-      data: caretakers
-    });
+    res.status(200).json({ success: true, data: caretakers });
   } catch (error) {
     console.error('Error fetching caretakers:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
-// POST - Create new care taker
+// POST - Create new caretaker
 router.post('/caretakers', async (req, res) => {
   try {
-    const { name, email, phone, designation } = req.body;
+    const { name, phone, designation } = req.body;
     
-    if (!name || !email || !phone) {
-      return res.status(400).json({
-        success: false,
-        message: 'Name, email and phone are required'
+    // Only name and phone are required (email removed)
+    if (!name || !phone) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Name and phone are required' 
       });
     }
     
-    const careTaker = new CareTaker({
-      name,
-      email,
-      phone,
-      designation: designation || '',
-      isActive: true
+    // Check if phone already exists
+    const existingHandler = await CareTaker.findOne({ phone });
+    if (existingHandler) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number already registered'
+      });
+    }
+    
+    const careTaker = new CareTaker({ 
+      name, 
+      phone, 
+      designation: designation || '', 
+      isActive: true 
     });
     
     await careTaker.save();
-    
-    res.status(201).json({
-      success: true,
-      message: 'Care taker added successfully',
-      data: careTaker
+    res.status(201).json({ 
+      success: true, 
+      message: 'Care taker added successfully', 
+      data: careTaker 
     });
   } catch (error) {
     console.error('Error creating care taker:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      error: error.message 
     });
   }
 });
 
-// PUT - Update care taker
+// PUT - Update caretaker
 router.put('/caretakers/:id', async (req, res) => {
   try {
-    const { name, email, phone, designation } = req.body;
+    const { name, phone, designation } = req.body;
+    
     const careTaker = await CareTaker.findByIdAndUpdate(
       req.params.id,
-      { name, email, phone, designation },
+      { name, phone, designation },
       { new: true, runValidators: true }
     );
     
     if (!careTaker) {
-      return res.status(404).json({
-        success: false,
-        message: 'Care taker not found'
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Care taker not found' 
       });
     }
     
-    res.status(200).json({
-      success: true,
-      message: 'Care taker updated successfully',
-      data: careTaker
+    res.status(200).json({ 
+      success: true, 
+      message: 'Care taker updated successfully', 
+      data: careTaker 
     });
   } catch (error) {
     console.error('Error updating care taker:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      error: error.message 
     });
   }
 });
 
-// DELETE - Delete care taker
+// DELETE - Delete caretaker
 router.delete('/caretakers/:id', async (req, res) => {
   try {
     const careTaker = await CareTaker.findByIdAndDelete(req.params.id);
-    
     if (!careTaker) {
-      return res.status(404).json({
-        success: false,
-        message: 'Care taker not found'
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Care taker not found' 
       });
     }
-    
-    res.status(200).json({
-      success: true,
-      message: 'Care taker deleted successfully'
+    res.status(200).json({ 
+      success: true, 
+      message: 'Care taker deleted successfully' 
     });
   } catch (error) {
     console.error('Error deleting care taker:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error', 
+      error: error.message 
     });
   }
 });
 
 // ===== CLIENT REGISTRATION ROUTES =====
-// POST - Create new client registration
+
 router.post('/register', async (req, res) => {
   try {
     const { concernName, businessName, panNo, aadharNo, gstNo } = req.body;
-
     if (!concernName || !businessName || !panNo || !aadharNo) {
-      return res.status(400).json({
-        success: false,
-        message: 'All required fields must be filled'
-      });
+      return res.status(400).json({ success: false, message: 'All required fields must be filled' });
     }
-
-    const existingClient = await Client.findOne({ 
-      $or: [{ panNo: panNo.toUpperCase() }, { businessName }] 
-    });
+    const existingClient = await Client.findOne({ $or: [{ panNo: panNo.toUpperCase() }, { businessName }] });
     if (existingClient) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client with this PAN or Business Name already exists'
-      });
+      return res.status(400).json({ success: false, message: 'Client with this PAN or Business Name already exists' });
     }
-
-    const username = generateUsername(businessName);
-    const plainPassword = generatePassword();
-
+    
+    // Remove spaces from PAN and Aadhaar
+    const cleanPan = panNo.replace(/\s/g, '').toUpperCase();
+    const cleanAadhaar = aadharNo.replace(/\s/g, '');
+    
     const client = new Client({
       concernName,
       businessName,
-      panNo: panNo.toUpperCase(),
-      aadharNo,
+      panNo: cleanPan,
+      aadharNo: cleanAadhaar,
       gstNo: gstNo ? gstNo.toUpperCase() : '',
-      username,
-      password: plainPassword,
+      authorisedPerson: {
+        aadhaarNo: cleanAadhaar,
+        name: concernName
+      },
+      username: null,
+      password: null,
       status: 'pending'
     });
-
     await client.save();
-
     res.status(201).json({
       success: true,
       message: 'Client registered successfully',
-      data: {
-        ...client.toObject(),
-        generatedPassword: plainPassword
-      }
+      data: client
     });
   } catch (error) {
     console.error('Error registering client:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
-// GET - Get pending client requests
 router.get('/pending', async (req, res) => {
   try {
     const clients = await Client.find({ status: 'pending' })
       .populate('careTaker', 'name email phone designation')
       .sort({ createdAt: -1 });
-    
-    res.status(200).json({
-      success: true,
-      count: clients.length,
-      data: clients
-    });
+    res.status(200).json({ success: true, count: clients.length, data: clients });
   } catch (error) {
     console.error('Error fetching pending clients:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
-// GET - Get registered clients
 router.get('/registered', async (req, res) => {
   try {
     const clients = await Client.find({ status: { $in: ['registered', 'active'] } })
       .populate('careTaker', 'name email phone designation')
       .sort({ registeredAt: -1 });
-    
-    res.status(200).json({
-      success: true,
-      count: clients.length,
-      data: clients
-    });
+    res.status(200).json({ success: true, count: clients.length, data: clients });
   } catch (error) {
     console.error('Error fetching registered clients:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
-// PUT - Update client (ALL sections)
+// ===== UPDATE CLIENT ROUTE =====
 router.put('/:id', async (req, res) => {
   try {
     const updates = req.body;
     
-    // Find and update the client
+    // Remove fields that shouldn't be updated or are causing validation issues
+    // Don't allow updating these fields through this route
+    delete updates._id;
+    delete updates.createdAt;
+    delete updates.updatedAt;
+    delete updates.status; // Status should only be updated via /approve route
+    
+    // If panNo is being sent as empty string, remove it from updates
+    // to avoid validation error (since it's required in schema)
+    if (updates.panNo === '' || updates.panNo === null || updates.panNo === undefined) {
+      delete updates.panNo;
+    }
+    
+    // Similarly handle other required fields that might be empty
+    if (updates.concernName === '' || updates.concernName === null) {
+      delete updates.concernName;
+    }
+    if (updates.businessName === '' || updates.businessName === null) {
+      delete updates.businessName;
+    }
+
     const client = await Client.findByIdAndUpdate(
       req.params.id,
-      updates,
+      { $set: updates },
       { 
         new: true, 
-        runValidators: true 
+        runValidators: false, // Disable validators to allow partial updates
+        context: 'query'
       }
     ).populate('careTaker', 'name email phone designation');
     
     if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
+      return res.status(404).json({ success: false, message: 'Client not found' });
     }
     
-    res.status(200).json({
-      success: true,
-      message: 'Client updated successfully',
-      data: client
-    });
+    res.status(200).json({ success: true, message: 'Client updated successfully', data: client });
   } catch (error) {
     console.error('Error updating client:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
-// GET - Get single client by ID
+// ===== UPDATE STATUTORY REGISTRATION =====
+router.put('/:id/statutory', async (req, res) => {
+  try {
+    const { concernType, panNo, msmeNo, gstNo, tanNo, authorisedPerson, isGstApplicable, isTanApplicable } = req.body;
+    
+    const updateData = {};
+    
+    // Only add fields that are provided
+    if (concernType !== undefined) updateData.concernType = concernType;
+    if (panNo !== undefined && panNo !== '') updateData.panNo = panNo.toUpperCase();
+    if (msmeNo !== undefined) updateData.msmeNo = msmeNo;
+    if (gstNo !== undefined) updateData.gstNo = gstNo ? gstNo.toUpperCase() : '';
+    if (tanNo !== undefined) updateData.tanNo = tanNo ? tanNo.toUpperCase() : '';
+    if (isGstApplicable !== undefined) updateData.isGstApplicable = isGstApplicable;
+    if (isTanApplicable !== undefined) updateData.isTanApplicable = isTanApplicable;
+    if (authorisedPerson !== undefined) {
+      updateData.authorisedPerson = {
+        ...(client.authorisedPerson || {}),
+        ...authorisedPerson
+      };
+    }
+    
+    const client = await Client.findByIdAndUpdate(
+      req.params.id,
+      { $set: updateData },
+      { 
+        new: true, 
+        runValidators: false // Disable validation for partial updates
+      }
+    ).populate('careTaker', 'name email phone designation');
+    
+    if (!client) {
+      return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+    
+    res.status(200).json({ success: true, message: 'Statutory details updated successfully', data: client });
+  } catch (error) {
+    console.error('Error updating statutory details:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const client = await Client.findById(req.params.id)
       .populate('careTaker', 'name email phone designation');
-    
     if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
+      return res.status(404).json({ success: false, message: 'Client not found' });
     }
-    
-    res.status(200).json({
-      success: true,
-      data: client
-    });
+    res.status(200).json({ success: true, data: client });
   } catch (error) {
     console.error('Error fetching client:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
-// PUT - Approve/Register client
 router.put('/:id/approve', async (req, res) => {
   try {
     const client = await Client.findByIdAndUpdate(
       req.params.id,
-      { 
-        status: 'registered',
-        activatedAt: new Date()
-      },
+      { status: 'registered', activatedAt: new Date() },
       { new: true, runValidators: true }
     ).populate('careTaker', 'name email phone designation');
-    
     if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
+      return res.status(404).json({ success: false, message: 'Client not found' });
     }
-    
-    res.status(200).json({
-      success: true,
-      message: 'Client approved successfully',
-      data: client
-    });
+    res.status(200).json({ success: true, message: 'Client approved successfully', data: client });
   } catch (error) {
     console.error('Error approving client:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
-// PUT - Regenerate password
 router.put('/:id/password', async (req, res) => {
   try {
     const { password } = req.body;
@@ -344,245 +350,124 @@ router.put('/:id/password', async (req, res) => {
       { password },
       { new: true, runValidators: true }
     );
-    
     if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
+      return res.status(404).json({ success: false, message: 'Client not found' });
     }
-    
-    res.status(200).json({
-      success: true,
-      message: 'Password updated successfully',
-      data: client
-    });
+    res.status(200).json({ success: true, message: 'Password updated successfully', data: client });
   } catch (error) {
     console.error('Error updating password:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
-// DELETE - Delete client
 router.delete('/:id', async (req, res) => {
   try {
     const client = await Client.findByIdAndDelete(req.params.id);
-    
     if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
+      return res.status(404).json({ success: false, message: 'Client not found' });
     }
-    
-    res.status(200).json({
-      success: true,
-      message: 'Client deleted successfully'
-    });
+    res.status(200).json({ success: true, message: 'Client deleted successfully' });
   } catch (error) {
     console.error('Error deleting client:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
-// POST - Client login (for frontend)
 router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    
     if (!username || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Username and password are required'
-      });
+      return res.status(400).json({ success: false, message: 'Username and password are required' });
     }
-    
-    // Trim username and password to remove any extra spaces
     const trimmedUsername = username.trim();
     const trimmedPassword = password.trim();
-    
-    console.log('Login attempt:', { username: trimmedUsername, password: trimmedPassword });
-    
-    const client = await Client.findOne({ 
+    const client = await Client.findOne({
       username: trimmedUsername,
       status: { $in: ['registered', 'active'] }
     }).populate('careTaker', 'name email phone designation');
-    
     if (!client) {
-      console.log('Client not found:', trimmedUsername);
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials or account not activated'
-      });
+      return res.status(401).json({ success: false, message: 'Invalid credentials or account not activated' });
     }
-    
-    console.log('Stored password:', client.password);
-    console.log('Input password:', trimmedPassword);
-    
-    // Direct password comparison (without bcrypt)
     if (trimmedPassword !== client.password) {
-      console.log('Password mismatch');
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
-    
-    res.status(200).json({
-      success: true,
-      message: 'Login successful',
-      data: client
-    });
+    res.status(200).json({ success: true, message: 'Login successful', data: client });
   } catch (error) {
     console.error('Error during login:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
-// GET - Get client by ID with all details (for client portal)
 router.get('/portal/:clientId', async (req, res) => {
   try {
     const client = await Client.findById(req.params.clientId)
       .populate('careTaker', 'name email phone designation');
-    
     if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
+      return res.status(404).json({ success: false, message: 'Client not found' });
     }
-    
-    res.status(200).json({
-      success: true,
-      data: client
-    });
+    res.status(200).json({ success: true, data: client });
   } catch (error) {
     console.error('Error fetching client:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
-// PUT - Update service table cell color
 router.put('/portal/:clientId/service/:serviceName/update', async (req, res) => {
   try {
     const { clientId, serviceName } = req.params;
     const { rowIndex, columnName, color } = req.body;
-    
     const client = await Client.findById(clientId);
     if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
+      return res.status(404).json({ success: false, message: 'Client not found' });
     }
-    
-    // Initialize serviceTables if not exists
     if (!client.serviceTables) {
       client.serviceTables = new Map();
     }
-    
-    // Initialize service table if not exists
     if (!client.serviceTables.get(serviceName)) {
       client.serviceTables.set(serviceName, new Map());
     }
-    
     const serviceTable = client.serviceTables.get(serviceName);
     const cellKey = `row${rowIndex}-${columnName}`;
     serviceTable.set(cellKey, color);
-    
     await client.save();
-    
-    res.status(200).json({
-      success: true,
-      message: 'Cell updated successfully',
-      data: client
-    });
+    res.status(200).json({ success: true, message: 'Cell updated successfully', data: client });
   } catch (error) {
     console.error('Error updating cell:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
-// PUT - Add row to service table
 router.put('/portal/:clientId/service/:serviceName/add-row', async (req, res) => {
   try {
     const { clientId, serviceName } = req.params;
     const { month, year } = req.body;
-    
     const client = await Client.findById(clientId);
     if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
+      return res.status(404).json({ success: false, message: 'Client not found' });
     }
-    
-    // Initialize serviceRows if not exists
     if (!client.serviceRows) {
       client.serviceRows = new Map();
     }
-    
     const rows = client.serviceRows.get(serviceName) || [];
-    rows.push({
-      month,
-      year,
-      data: new Map()
-    });
+    rows.push({ month, year, data: new Map() });
     client.serviceRows.set(serviceName, rows);
-    
     await client.save();
-    
-    res.status(200).json({
-      success: true,
-      message: 'Row added successfully',
-      data: client
-    });
+    res.status(200).json({ success: true, message: 'Row added successfully', data: client });
   } catch (error) {
     console.error('Error adding row:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
-// GET - Get client's service table data
 router.get('/portal/:clientId/service/:serviceName', async (req, res) => {
   try {
     const { clientId, serviceName } = req.params;
-    
     const client = await Client.findById(clientId);
     if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
+      return res.status(404).json({ success: false, message: 'Client not found' });
     }
-    
     const serviceTables = client.serviceTables || new Map();
     const serviceRows = client.serviceRows || new Map();
-    
     res.status(200).json({
       success: true,
       data: {
@@ -592,9 +477,303 @@ router.get('/portal/:clientId/service/:serviceName', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching service data:', error);
-    res.status(500).json({
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// ===== UPLOAD ROUTES =====
+
+router.post('/upload/:clientId', upload.single('file'), async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const { field } = req.body;
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded'
+      });
+    }
+
+    if (!field) {
+      return res.status(400).json({
+        success: false,
+        message: 'Field is required'
+      });
+    }
+
+    const client = await Client.findById(clientId);
+
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        message: 'Client not found'
+      });
+    }
+
+    const isPdf = file.mimetype === 'application/pdf';
+    const resourceType = isPdf ? 'raw' : 'image';
+
+    const result = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: `clients/${clientId}`,
+          resource_type: resourceType,
+          use_filename: true,
+          unique_filename: true,
+          access_mode: 'public'
+        },
+        (error, result) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve(result);
+          }
+        }
+      );
+
+      uploadStream.end(file.buffer);
+    });
+
+    /*
+      Convert:
+      panUpload -> pan
+      gstUpload -> gst
+      msmeUpload -> msme
+      tanUpload -> tan
+
+      authorisedPerson.panUpload
+      -> authorisedPerson.pan
+    */
+
+    const updateFields = {};
+
+    if (field.includes('.')) {
+      const [parent, child] = field.split('.');
+
+      const baseField = child.replace(/Upload$/, '');
+
+      updateFields[`${parent}.${child}`] = 'uploaded';
+      updateFields[`${parent}.${baseField}Url`] = result.secure_url;
+      updateFields[`${parent}.${baseField}PublicId`] = result.public_id;
+      updateFields[`${parent}.${baseField}ResourceType`] = resourceType;
+
+    } else {
+      const baseField = field.replace(/Upload$/, '');
+
+      updateFields[field] = 'uploaded';
+      updateFields[`${baseField}Url`] = result.secure_url;
+      updateFields[`${baseField}PublicId`] = result.public_id;
+      updateFields[`${baseField}ResourceType`] = resourceType;
+    }
+
+    const updatedClient = await Client.findByIdAndUpdate(
+      clientId,
+      { $set: updateFields },
+      { new: true, runValidators: false }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'File uploaded successfully',
+      data: {
+        url: result.secure_url,
+        publicId: result.public_id,
+        resourceType,
+        client: updatedClient
+      }
+    });
+
+  } catch (error) {
+    console.error('Upload error:', error);
+
+    return res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: 'File upload failed',
+      error: error.message
+    });
+  }
+});
+
+// DELETE - Delete file from Cloudinary
+router.delete('/delete-file/:publicId', async (req, res) => {
+  try {
+    const { publicId } = req.params;
+    const { resourceType = 'image' } = req.query;
+
+    if (!publicId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Public ID is required'
+      });
+    }
+
+    const decodedPublicId = decodeURIComponent(publicId);
+
+    console.log('Deleting Cloudinary file:', {
+      publicId: decodedPublicId,
+      resourceType
+    });
+
+    const result = await new Promise((resolve, reject) => {
+      cloudinary.uploader.destroy(
+        decodedPublicId,
+        {
+          resource_type: resourceType
+        },
+        (error, result) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve(result);
+          }
+        }
+      );
+    });
+
+    console.log('Cloudinary delete result:', result);
+
+    if (result.result === 'ok') {
+      return res.status(200).json({
+        success: true,
+        message: 'File deleted successfully from Cloudinary',
+        result
+      });
+    }
+
+    if (result.result === 'not found') {
+      return res.status(200).json({
+        success: true,
+        message: 'File was already deleted from Cloudinary',
+        result
+      });
+    }
+
+    return res.status(400).json({
+      success: false,
+      message: 'Cloudinary could not delete the file',
+      result
+    });
+
+  } catch (error) {
+    console.error('Delete file error:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to delete file',
+      error: error.message
+    });
+  }
+});
+
+router.delete('/remove-file/:clientId', async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const { field } = req.query;
+
+    if (!field) {
+      return res.status(400).json({
+        success: false,
+        message: 'Field is required'
+      });
+    }
+
+    const client = await Client.findById(clientId);
+
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        message: 'Client not found'
+      });
+    }
+
+    let publicId;
+    let resourceType;
+
+    if (field.includes('.')) {
+      const [parent, child] = field.split('.');
+
+      const baseField = child.replace(/Upload$/, '');
+
+      publicId = client[parent]?.[`${baseField}PublicId`];
+      resourceType = client[parent]?.[`${baseField}ResourceType`] || 'image';
+
+    } else {
+      const baseField = field.replace(/Upload$/, '');
+
+      publicId = client[`${baseField}PublicId`];
+      resourceType = client[`${baseField}ResourceType`] || 'image';
+    }
+
+    // Delete from Cloudinary if publicId exists
+    if (publicId) {
+      console.log('Removing Cloudinary file:', {
+        publicId,
+        resourceType
+      });
+
+      const result = await new Promise((resolve, reject) => {
+        cloudinary.uploader.destroy(
+          publicId,
+          {
+            resource_type: resourceType
+          },
+          (error, result) => {
+            if (error) {
+              reject(error);
+            } else {
+              resolve(result);
+            }
+          }
+        );
+      });
+
+      console.log('Cloudinary remove result:', result);
+    }
+
+    // Clear MongoDB fields
+    const updateFields = {};
+
+    if (field.includes('.')) {
+      const [parent, child] = field.split('.');
+      const baseField = child.replace(/Upload$/, '');
+
+      updateFields[`${parent}.${child}`] = 'pending';
+      updateFields[`${parent}.${baseField}Url`] = '';
+      updateFields[`${parent}.${baseField}PublicId`] = '';
+      updateFields[`${parent}.${baseField}ResourceType`] = '';
+
+    } else {
+      const baseField = field.replace(/Upload$/, '');
+
+      updateFields[field] = 'pending';
+      updateFields[`${baseField}Url`] = '';
+      updateFields[`${baseField}PublicId`] = '';
+      updateFields[`${baseField}ResourceType`] = '';
+    }
+
+    const updatedClient = await Client.findByIdAndUpdate(
+      clientId,
+      { $set: updateFields },
+      {
+        new: true,
+        runValidators: false
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'File removed successfully',
+      data: updatedClient
+    });
+
+  } catch (error) {
+    console.error('Remove file error:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to remove file',
       error: error.message
     });
   }

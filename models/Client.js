@@ -58,6 +58,23 @@ const clientSchema = new mongoose.Schema({
     enum: ['pending', 'uploaded'],
     default: 'pending'
   },
+  panUrl: {
+    type: String,
+    default: ''
+  },
+  panPublicId: {
+    type: String,
+    default: ''
+  },
+  panResourceType: {
+    type: String,
+    default: ''
+  },
+  aadharNo: {
+    type: String,
+    trim: true,
+    default: ''
+  },
   gstNo: {
     type: String,
     trim: true,
@@ -69,6 +86,18 @@ const clientSchema = new mongoose.Schema({
     enum: ['pending', 'uploaded'],
     default: 'pending'
   },
+  gstUrl: {
+    type: String,
+    default: ''
+  },
+  gstPublicId: {
+    type: String,
+    default: ''
+  },
+  gstResourceType: {
+    type: String,
+    default: ''
+  },
   msmeNo: {
     type: String,
     trim: true,
@@ -78,6 +107,18 @@ const clientSchema = new mongoose.Schema({
     type: String,
     enum: ['pending', 'uploaded'],
     default: 'pending'
+  },
+  msmeUrl: {
+    type: String,
+    default: ''
+  },
+  msmePublicId: {
+    type: String,
+    default: ''
+  },
+  msmeResourceType: {
+    type: String,
+    default: ''
   },
   tanNo: {
     type: String,
@@ -89,13 +130,31 @@ const clientSchema = new mongoose.Schema({
     enum: ['pending', 'uploaded'],
     default: 'pending'
   },
+  tanUrl: {
+    type: String,
+    default: ''
+  },
+  tanPublicId: {
+    type: String,
+    default: ''
+  },
+  tanResourceType: {
+    type: String,
+    default: ''
+  },
   // Partners/Proprietors/Authorised Person
   authorisedPerson: {
     name: { type: String, default: '' },
     panNo: { type: String, default: '' },
     panUpload: { type: String, enum: ['pending', 'uploaded'], default: 'pending' },
+    panUrl: { type: String, default: '' },
+    panPublicId: { type: String, default: '' },
+    panResourceType: { type: String, default: '' },
     aadhaarNo: { type: String, default: '' },
-    aadhaarUpload: { type: String, enum: ['pending', 'uploaded'], default: 'pending' }
+    aadhaarUpload: { type: String, enum: ['pending', 'uploaded'], default: 'pending' },
+    aadhaarUrl: { type: String, default: '' },
+    aadhaarPublicId: { type: String, default: '' },
+    aadhaarResourceType: { type: String, default: '' }
   },
 
   // ===== BANKING DETAILS =====
@@ -119,13 +178,14 @@ const clientSchema = new mongoose.Schema({
   // ===== CREDENTIALS =====
   username: {
     type: String,
-    required: true,
     unique: true,
-    trim: true
+    sparse: true,
+    trim: true,
+    default: null
   },
   password: {
     type: String,
-    required: true
+    default: null
   },
 
   // ===== CARE TAKER =====
@@ -148,13 +208,12 @@ const clientSchema = new mongoose.Schema({
     default: Date.now
   },
   activatedAt: Date,
-
   createdAt: {
     type: Date,
     default: Date.now
   },
 
-    // Service Tables Data
+  // Service Tables Data
   serviceTables: {
     type: Map,
     of: {
@@ -168,7 +227,6 @@ const clientSchema = new mongoose.Schema({
     default: {}
   },
   
-  // Service row data (months)
   serviceRows: {
     type: Map,
     of: [{
@@ -181,9 +239,17 @@ const clientSchema = new mongoose.Schema({
       }
     }],
     default: {}
+  },
+
+  // Optional fields
+  isGstApplicable: {
+    type: Boolean,
+    default: false
+  },
+  isTanApplicable: {
+    type: Boolean,
+    default: false
   }
 });
-
-
 
 export default mongoose.model('Client', clientSchema);

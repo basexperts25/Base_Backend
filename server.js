@@ -7,10 +7,18 @@ import contactRoutes from './routes/Contact.js';
 import homeRoutes from './routes/Home.js'; 
 import serviceRoutes from './routes/Service.js';
 import clientRoutes from './routes/Client.js'; // Add this
+import statusRoutes from './routes/Status.js'; // Add this
+
 
 
 
 dotenv.config();
+
+console.log('Cloudinary config:', {
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY ? '✅ Set' : '❌ Missing',
+  api_secret: process.env.CLOUDINARY_API_SECRET ? '✅ Set' : '❌ Missing'
+});
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -24,6 +32,8 @@ app.use('/contacts', contactRoutes);
 app.use('/home', homeRoutes);
 app.use('/service', serviceRoutes);
 app.use('/clients', clientRoutes); // Add this
+app.use('/status', statusRoutes); // Add this
+
 
 
 

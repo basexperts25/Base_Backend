@@ -1,35 +1,27 @@
-// server/models/CareTaker.js
+// server/models/ClientHandlers.js
 import mongoose from 'mongoose';
 
-const clienthandlerSchema = new mongoose.Schema({
+const clientHandlerSchema = new mongoose.Schema({
   name: {
     type: String,
     required: [true, 'Name is required'],
     trim: true
   },
-  // email: {
-  //   type: String,
-  //   required: [true, 'Email is required'],
-  //   trim: true,
-  //   lowercase: true
-  // },
   phone: {
     type: String,
-    required: [true, 'Phone is required'],
+    required: [true, 'Phone number is required'],
     trim: true
   },
   designation: {
     type: String,
-    trim: true
+    default: ''
   },
   isActive: {
     type: Boolean,
     default: true
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
   }
+}, {
+  timestamps: true
 });
 
-export default mongoose.model('ClientHandler', clienthandlerSchema);
+export default mongoose.model('ClientHandler', clientHandlerSchema);
