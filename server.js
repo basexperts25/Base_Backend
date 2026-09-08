@@ -28,7 +28,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
   'http://localhost:5000',
-  'https://base-admin-rouge.vercel.app',
+  'https://base-admin-git-main-basexperts25-1039.vercel.app',
   'https://base-frontend-rose.vercel.app'
 ].filter(Boolean);
 
