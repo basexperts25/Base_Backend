@@ -58,18 +58,9 @@ const clientSchema = new mongoose.Schema({
     enum: ['pending', 'uploaded'],
     default: 'pending'
   },
-  panUrl: {
-    type: String,
-    default: ''
-  },
-  panPublicId: {
-    type: String,
-    default: ''
-  },
-  panResourceType: {
-    type: String,
-    default: ''
-  },
+  panUrl: { type: String, default: '' },
+  panPublicId: { type: String, default: '' },
+  panResourceType: { type: String, default: '' },
   aadharNo: {
     type: String,
     trim: true,
@@ -86,18 +77,9 @@ const clientSchema = new mongoose.Schema({
     enum: ['pending', 'uploaded'],
     default: 'pending'
   },
-  gstUrl: {
-    type: String,
-    default: ''
-  },
-  gstPublicId: {
-    type: String,
-    default: ''
-  },
-  gstResourceType: {
-    type: String,
-    default: ''
-  },
+  gstUrl: { type: String, default: '' },
+  gstPublicId: { type: String, default: '' },
+  gstResourceType: { type: String, default: '' },
   msmeNo: {
     type: String,
     trim: true,
@@ -108,18 +90,9 @@ const clientSchema = new mongoose.Schema({
     enum: ['pending', 'uploaded'],
     default: 'pending'
   },
-  msmeUrl: {
-    type: String,
-    default: ''
-  },
-  msmePublicId: {
-    type: String,
-    default: ''
-  },
-  msmeResourceType: {
-    type: String,
-    default: ''
-  },
+  msmeUrl: { type: String, default: '' },
+  msmePublicId: { type: String, default: '' },
+  msmeResourceType: { type: String, default: '' },
   tanNo: {
     type: String,
     trim: true,
@@ -130,18 +103,9 @@ const clientSchema = new mongoose.Schema({
     enum: ['pending', 'uploaded'],
     default: 'pending'
   },
-  tanUrl: {
-    type: String,
-    default: ''
-  },
-  tanPublicId: {
-    type: String,
-    default: ''
-  },
-  tanResourceType: {
-    type: String,
-    default: ''
-  },
+  tanUrl: { type: String, default: '' },
+  tanPublicId: { type: String, default: '' },
+  tanResourceType: { type: String, default: '' },
   // Partners/Proprietors/Authorised Person
   authorisedPerson: {
     name: { type: String, default: '' },
@@ -160,12 +124,16 @@ const clientSchema = new mongoose.Schema({
   // ===== BANKING DETAILS =====
   banks: [{
     bankName: { type: String, default: '' },
-    accountType: { type: String, enum: ['CA', 'CC', 'OD', 'SB', 'Term Loan - Machinery', 'Term Loan - Assets', 'Term Loan - Vehicle', 'Term Loan - Business', 'Gold Loan', 'Others'], default: 'SB' },
+    accountType: {
+      type: String,
+      enum: ['CA', 'CC', 'OD', 'SB', 'Term Loan - Machinery', 'Term Loan - Assets', 'Term Loan - Vehicle', 'Term Loan - Business', 'Gold Loan', 'Others'],
+      default: 'SB'
+    },
     accountNo: { type: String, default: '' },
     renewalDate: { type: String, default: '' }
   }],
 
-  // ===== STATUTORY APPLICABILITY =====
+  // ===== STATUTORY APPLICABILITY (CURRENT) =====
   compliances: [{
     complianceName: { type: String, default: '' },
     commitments: { type: String, default: '' },
@@ -174,6 +142,29 @@ const clientSchema = new mongoose.Schema({
     finalFee: { type: Number, default: 0 },
     isSelected: { type: Boolean, default: false }
   }],
+
+  // ===== COMPLIANCE HISTORY (ONE doc per client) =====
+  complianceHistory: [{
+    version: { type: Number, default: 1 },
+    changedAt: { type: Date, default: Date.now },
+    compliances: [{
+      complianceName: { type: String, default: '' },
+      commitments: { type: String, default: '' },
+      agreeFee: { type: Number, default: 0 },
+      discountPercent: { type: Number, default: 0 },
+      finalFee: { type: Number, default: 0 },
+      isSelected: { type: Boolean, default: false }
+    }],
+    totalFee: { type: Number, default: 0 },
+    balanceFee: { type: Number, default: 0 },
+    setBy: { type: String, default: 'Admin' }
+  }],
+
+  // ===== CURRENT BALANCE FEE =====
+  balanceFee: {
+    type: Number,
+    default: 0
+  },
 
   // ===== CREDENTIALS =====
   username: {
@@ -203,15 +194,9 @@ const clientSchema = new mongoose.Schema({
   },
 
   // ===== TIMESTAMPS =====
-  registeredAt: {
-    type: Date,
-    default: Date.now
-  },
+  registeredAt: { type: Date, default: Date.now },
   activatedAt: Date,
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
+  createdAt: { type: Date, default: Date.now },
 
   // Service Tables Data
   serviceTables: {
@@ -226,7 +211,7 @@ const clientSchema = new mongoose.Schema({
     },
     default: {}
   },
-  
+
   serviceRows: {
     type: Map,
     of: [{
@@ -242,14 +227,8 @@ const clientSchema = new mongoose.Schema({
   },
 
   // Optional fields
-  isGstApplicable: {
-    type: Boolean,
-    default: false
-  },
-  isTanApplicable: {
-    type: Boolean,
-    default: false
-  }
+  isGstApplicable: { type: Boolean, default: false },
+  isTanApplicable: { type: Boolean, default: false }
 });
 
 export default mongoose.model('Client', clientSchema);

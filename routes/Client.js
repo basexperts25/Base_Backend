@@ -57,15 +57,15 @@ router.get('/caretakers', async (req, res) => {
 router.post('/caretakers', async (req, res) => {
   try {
     const { name, phone, designation } = req.body;
-    
+
     // Only name and phone are required (email removed)
     if (!name || !phone) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Name and phone are required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Name and phone are required'
       });
     }
-    
+
     // Check if phone already exists
     const existingHandler = await CareTaker.findOne({ phone });
     if (existingHandler) {
@@ -74,26 +74,26 @@ router.post('/caretakers', async (req, res) => {
         message: 'Phone number already registered'
       });
     }
-    
-    const careTaker = new CareTaker({ 
-      name, 
-      phone, 
-      designation: designation || '', 
-      isActive: true 
+
+    const careTaker = new CareTaker({
+      name,
+      phone,
+      designation: designation || '',
+      isActive: true
     });
-    
+
     await careTaker.save();
-    res.status(201).json({ 
-      success: true, 
-      message: 'Care taker added successfully', 
-      data: careTaker 
+    res.status(201).json({
+      success: true,
+      message: 'Care taker added successfully',
+      data: careTaker
     });
   } catch (error) {
     console.error('Error creating care taker:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
     });
   }
 });
@@ -102,31 +102,31 @@ router.post('/caretakers', async (req, res) => {
 router.put('/caretakers/:id', async (req, res) => {
   try {
     const { name, phone, designation } = req.body;
-    
+
     const careTaker = await CareTaker.findByIdAndUpdate(
       req.params.id,
       { name, phone, designation },
       { new: true, runValidators: true }
     );
-    
+
     if (!careTaker) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Care taker not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Care taker not found'
       });
     }
-    
-    res.status(200).json({ 
-      success: true, 
-      message: 'Care taker updated successfully', 
-      data: careTaker 
+
+    res.status(200).json({
+      success: true,
+      message: 'Care taker updated successfully',
+      data: careTaker
     });
   } catch (error) {
     console.error('Error updating care taker:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
     });
   }
 });
@@ -136,21 +136,21 @@ router.delete('/caretakers/:id', async (req, res) => {
   try {
     const careTaker = await CareTaker.findByIdAndDelete(req.params.id);
     if (!careTaker) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Care taker not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Care taker not found'
       });
     }
-    res.status(200).json({ 
-      success: true, 
-      message: 'Care taker deleted successfully' 
+    res.status(200).json({
+      success: true,
+      message: 'Care taker deleted successfully'
     });
   } catch (error) {
     console.error('Error deleting care taker:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
     });
   }
 });
@@ -167,11 +167,11 @@ router.post('/register', async (req, res) => {
     if (existingClient) {
       return res.status(400).json({ success: false, message: 'Client with this PAN or Business Name already exists' });
     }
-    
+
     // Remove spaces from PAN and Aadhaar
     const cleanPan = panNo.replace(/\s/g, '').toUpperCase();
     const cleanAadhaar = aadharNo.replace(/\s/g, '');
-    
+
     const client = new Client({
       concernName,
       businessName,
@@ -226,20 +226,20 @@ router.get('/registered', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const updates = req.body;
-    
+
     // Remove fields that shouldn't be updated or are causing validation issues
     // Don't allow updating these fields through this route
     delete updates._id;
     delete updates.createdAt;
     delete updates.updatedAt;
     delete updates.status; // Status should only be updated via /approve route
-    
+
     // If panNo is being sent as empty string, remove it from updates
     // to avoid validation error (since it's required in schema)
     if (updates.panNo === '' || updates.panNo === null || updates.panNo === undefined) {
       delete updates.panNo;
     }
-    
+
     // Similarly handle other required fields that might be empty
     if (updates.concernName === '' || updates.concernName === null) {
       delete updates.concernName;
@@ -251,17 +251,17 @@ router.put('/:id', async (req, res) => {
     const client = await Client.findByIdAndUpdate(
       req.params.id,
       { $set: updates },
-      { 
-        new: true, 
+      {
+        new: true,
         runValidators: false, // Disable validators to allow partial updates
         context: 'query'
       }
     ).populate('careTaker', 'name email phone designation');
-    
+
     if (!client) {
       return res.status(404).json({ success: false, message: 'Client not found' });
     }
-    
+
     res.status(200).json({ success: true, message: 'Client updated successfully', data: client });
   } catch (error) {
     console.error('Error updating client:', error);
@@ -273,9 +273,9 @@ router.put('/:id', async (req, res) => {
 router.put('/:id/statutory', async (req, res) => {
   try {
     const { concernType, panNo, msmeNo, gstNo, tanNo, authorisedPerson, isGstApplicable, isTanApplicable } = req.body;
-    
+
     const updateData = {};
-    
+
     // Only add fields that are provided
     if (concernType !== undefined) updateData.concernType = concernType;
     if (panNo !== undefined && panNo !== '') updateData.panNo = panNo.toUpperCase();
@@ -290,20 +290,20 @@ router.put('/:id/statutory', async (req, res) => {
         ...authorisedPerson
       };
     }
-    
+
     const client = await Client.findByIdAndUpdate(
       req.params.id,
       { $set: updateData },
-      { 
-        new: true, 
+      {
+        new: true,
         runValidators: false // Disable validation for partial updates
       }
     ).populate('careTaker', 'name email phone designation');
-    
+
     if (!client) {
       return res.status(404).json({ success: false, message: 'Client not found' });
     }
-    
+
     res.status(200).json({ success: true, message: 'Statutory details updated successfully', data: client });
   } catch (error) {
     console.error('Error updating statutory details:', error);
@@ -327,15 +327,43 @@ router.get('/:id', async (req, res) => {
 
 router.put('/:id/approve', async (req, res) => {
   try {
-    const client = await Client.findByIdAndUpdate(
-      req.params.id,
-      { status: 'registered', activatedAt: new Date() },
-      { new: true, runValidators: true }
-    ).populate('careTaker', 'name email phone designation');
+    const client = await Client.findById(req.params.id);
     if (!client) {
       return res.status(404).json({ success: false, message: 'Client not found' });
     }
-    res.status(200).json({ success: true, message: 'Client approved successfully', data: client });
+
+    const compliances = client.compliances && client.compliances.length > 0
+      ? client.compliances
+      : [];
+
+    const totalFee = compliances.reduce(
+      (sum, c) => sum + (c.isSelected ? (c.finalFee || c.agreeFee || 0) : 0),
+      0
+    );
+
+    // ✅ Auto-create Version 1 when client is approved
+    client.complianceHistory = [{
+      version: 1,
+      changedAt: new Date(),
+      compliances: compliances,
+      totalFee: totalFee,
+      balanceFee: totalFee,       // initial balance = total fee
+      setBy: 'System (Initial)'
+    }];
+
+    client.status = 'registered';
+    client.activatedAt = new Date();
+
+    await client.save();
+
+    const populated = await Client.findById(client._id)
+      .populate('careTaker', 'name email phone designation');
+
+    res.status(200).json({
+      success: true,
+      message: 'Client approved successfully',
+      data: populated
+    });
   } catch (error) {
     console.error('Error approving client:', error);
     res.status(500).json({ success: false, message: 'Server error', error: error.message });
@@ -776,6 +804,123 @@ router.delete('/remove-file/:clientId', async (req, res) => {
       message: 'Failed to remove file',
       error: error.message
     });
+  }
+});
+
+// ===== SET COMPLIANCE HISTORY (save current selection as new version) =====
+router.post('/:id/compliance-set', async (req, res) => {
+  try {
+    const { compliances, balanceFee, setBy } = req.body;
+    const client = await Client.findById(req.params.id);
+    if (!client) {
+      return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+
+    const totalFee = (compliances || []).reduce(
+      (sum, c) => sum + (c.isSelected ? (c.finalFee || c.agreeFee || 0) : 0),
+      0
+    );
+
+    // Calculate next version number
+    // If no history yet, seed Version 1 from current compliances
+    if (!client.complianceHistory || client.complianceHistory.length === 0) {
+      const initialCompliances = client.compliances || [];
+      const initialTotal = initialCompliances.reduce(
+        (sum, c) => sum + (c.isSelected ? (c.finalFee || c.agreeFee || 0) : 0),
+        0
+      );
+      client.complianceHistory = [{
+        version: 1,
+        changedAt: client.registeredAt || client.createdAt || new Date(),
+        compliances: initialCompliances,
+        totalFee: initialTotal,
+        balanceFee: client.balanceFee || initialTotal,
+        setBy: 'System (Initial)'
+      }];
+    }
+
+    const nextVersion = (client.complianceHistory?.length || 0) + 1;
+
+const currentBalanceSnapshot = client.balanceFee || 0;
+
+client.complianceHistory = client.complianceHistory || [];
+client.complianceHistory.push({
+  version: nextVersion,
+  changedAt: new Date(),
+  compliances: compliances || [],
+  totalFee,
+  balanceFee: currentBalanceSnapshot,   // snapshot for history only
+  setBy: setBy || 'Admin'
+});
+
+// Update current compliances ONLY (balance untouched)
+client.compliances = compliances || [];
+
+    await client.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Compliance set successfully',
+      data: client
+    });
+  } catch (error) {
+    console.error('Error setting compliance history:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// ===== UPDATE BALANCE FEE ONLY (independent from compliance) =====
+router.put('/:id/balance', async (req, res) => {
+  try {
+    const { balanceFee } = req.body;
+    const client = await Client.findById(req.params.id);
+    if (!client) {
+      return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+
+    client.balanceFee = Number(balanceFee) || 0;
+
+    // Also update the current (latest) history entry's balance so it reflects the change
+    if (client.complianceHistory && client.complianceHistory.length > 0) {
+      const latest = client.complianceHistory[client.complianceHistory.length - 1];
+      latest.balanceFee = client.balanceFee;
+    }
+
+    await client.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Balance updated successfully',
+      data: client
+    });
+  } catch (error) {
+    console.error('Error updating balance:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// ===== GET COMPLIANCE HISTORY =====
+router.get('/:id/compliance-history', async (req, res) => {
+  try {
+    const client = await Client.findById(req.params.id).select('complianceHistory balanceFee compliances');
+    if (!client) {
+      return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+
+    // Return most recent first
+    const history = [...(client.complianceHistory || [])].reverse();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        history,
+        balanceFee: client.balanceFee || 0,
+        currentCompliances: client.compliances || []
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching compliance history:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
