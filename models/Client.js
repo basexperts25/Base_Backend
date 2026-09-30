@@ -166,6 +166,19 @@ const clientSchema = new mongoose.Schema({
     default: 0
   },
 
+  // ===== READ UPLOADS (notification tracking) =====
+
+  readUploads: {
+    type: [String],
+    default: []
+  },
+
+  uploadReadAt: {
+    type: Map,
+    of: Date,
+    default: {}
+  },
+
   // ===== CREDENTIALS =====
   username: {
     type: String,
@@ -223,6 +236,29 @@ const clientSchema = new mongoose.Schema({
         default: {}
       }
     }],
+    default: {}
+  },
+
+  // ===== SERVICE-LEVEL UPLOADS (Books of Accounts etc.) =====
+  // Flat map for frontend URL lookups:
+  //   key: `${serviceName}-${rowIndex}-${columnName}`      -> URL
+  //   key: `${serviceName}-${rowIndex}-${columnName}_type` -> resourceType
+  serviceUploads: {
+    type: Map,
+    of: String,
+    default: {}
+  },
+
+  // Metadata needed for Cloudinary deletion (publicId, resourceType).
+  // key: `${serviceName}|${rowIndex}|${columnName}`
+  //   (Using '|' as separator because Mongoose Map keys cannot contain '.')
+  serviceUploadMeta: {
+    type: Map,
+    of: {
+      publicId: { type: String, default: '' },
+      resourceType: { type: String, default: '' },
+      url: { type: String, default: '' }
+    },
     default: {}
   },
 

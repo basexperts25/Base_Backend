@@ -58,7 +58,6 @@ router.post('/caretakers', async (req, res) => {
   try {
     const { name, phone, designation } = req.body;
 
-    // Only name and phone are required (email removed)
     if (!name || !phone) {
       return res.status(400).json({
         success: false,
@@ -66,7 +65,6 @@ router.post('/caretakers', async (req, res) => {
       });
     }
 
-    // Check if phone already exists
     const existingHandler = await CareTaker.findOne({ phone });
     if (existingHandler) {
       return res.status(400).json({
@@ -168,7 +166,6 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Client with this PAN or Business Name already exists' });
     }
 
-    // Remove spaces from PAN and Aadhaar
     const cleanPan = panNo.replace(/\s/g, '').toUpperCase();
     const cleanAadhaar = aadharNo.replace(/\s/g, '');
 
@@ -227,20 +224,14 @@ router.put('/:id', async (req, res) => {
   try {
     const updates = req.body;
 
-    // Remove fields that shouldn't be updated or are causing validation issues
-    // Don't allow updating these fields through this route
     delete updates._id;
     delete updates.createdAt;
     delete updates.updatedAt;
-    delete updates.status; // Status should only be updated via /approve route
+    delete updates.status;
 
-    // If panNo is being sent as empty string, remove it from updates
-    // to avoid validation error (since it's required in schema)
     if (updates.panNo === '' || updates.panNo === null || updates.panNo === undefined) {
       delete updates.panNo;
     }
-
-    // Similarly handle other required fields that might be empty
     if (updates.concernName === '' || updates.concernName === null) {
       delete updates.concernName;
     }
@@ -253,7 +244,7 @@ router.put('/:id', async (req, res) => {
       { $set: updates },
       {
         new: true,
-        runValidators: false, // Disable validators to allow partial updates
+        runValidators: false,
         context: 'query'
       }
     ).populate('careTaker', 'name email phone designation');
@@ -276,7 +267,6 @@ router.put('/:id/statutory', async (req, res) => {
 
     const updateData = {};
 
-    // Only add fields that are provided
     if (concernType !== undefined) updateData.concernType = concernType;
     if (panNo !== undefined && panNo !== '') updateData.panNo = panNo.toUpperCase();
     if (msmeNo !== undefined) updateData.msmeNo = msmeNo;
@@ -285,8 +275,9 @@ router.put('/:id/statutory', async (req, res) => {
     if (isGstApplicable !== undefined) updateData.isGstApplicable = isGstApplicable;
     if (isTanApplicable !== undefined) updateData.isTanApplicable = isTanApplicable;
     if (authorisedPerson !== undefined) {
+      const clientDoc = await Client.findById(req.params.id);
       updateData.authorisedPerson = {
-        ...(client.authorisedPerson || {}),
+        ...(clientDoc?.authorisedPerson || {}),
         ...authorisedPerson
       };
     }
@@ -296,7 +287,7 @@ router.put('/:id/statutory', async (req, res) => {
       { $set: updateData },
       {
         new: true,
-        runValidators: false // Disable validation for partial updates
+        runValidators: false
       }
     ).populate('careTaker', 'name email phone designation');
 
@@ -341,13 +332,12 @@ router.put('/:id/approve', async (req, res) => {
       0
     );
 
-    // ✅ Auto-create Version 1 when client is approved
     client.complianceHistory = [{
       version: 1,
       changedAt: new Date(),
       compliances: compliances,
       totalFee: totalFee,
-      balanceFee: totalFee,       // initial balance = total fee
+      balanceFee: totalFee,
       setBy: 'System (Initial)'
     }];
 
@@ -564,29 +554,57 @@ router.post('/upload/:clientId', upload.single('file'), async (req, res) => {
       uploadStream.end(file.buffer);
     });
 
-    /*
-      Convert:
-      panUpload -> pan
-      gstUpload -> gst
-      msmeUpload -> msme
-      tanUpload -> tan
+    // ===== SERVICE-LEVEL UPLOADS (e.g. "service.Books of Accounts(Tally).0.Sales") =====
+    if (field.startsWith('service.')) {
+      const parts = field.split('.');
+      // parts: ["service", serviceName, rowIndex, columnName]
+      const serviceName = parts[1];
+      const rowIndex = parts[2];
+      const columnName = parts[3];
 
-      authorisedPerson.panUpload
-      -> authorisedPerson.pan
-    */
+      const metaKey = `${serviceName}|${rowIndex}|${columnName}`;
+      const flatKey = `${serviceName}-${rowIndex}-${columnName}`;
 
+      // Ensure maps exist
+      if (!client.serviceUploadMeta) client.serviceUploadMeta = new Map();
+      if (!client.serviceUploads) client.serviceUploads = new Map();
+
+      client.serviceUploadMeta.set(metaKey, {
+        publicId: result.public_id,
+        resourceType,
+        url: result.secure_url
+      });
+
+      client.serviceUploads.set(flatKey, result.secure_url);
+      client.serviceUploads.set(`${flatKey}_type`, resourceType);
+
+      await client.save();
+
+      const refreshed = await Client.findById(clientId);
+
+      return res.status(200).json({
+        success: true,
+        message: 'File uploaded successfully',
+        data: {
+          url: result.secure_url,
+          publicId: result.public_id,
+          resourceType,
+          client: refreshed
+        }
+      });
+    }
+
+    // ===== SIMPLE FIELD UPLOADS (pan, gst, msme, tan, authorisedPerson.*) =====
     const updateFields = {};
 
     if (field.includes('.')) {
       const [parent, child] = field.split('.');
-
       const baseField = child.replace(/Upload$/, '');
 
       updateFields[`${parent}.${child}`] = 'uploaded';
       updateFields[`${parent}.${baseField}Url`] = result.secure_url;
       updateFields[`${parent}.${baseField}PublicId`] = result.public_id;
       updateFields[`${parent}.${baseField}ResourceType`] = resourceType;
-
     } else {
       const baseField = field.replace(/Upload$/, '');
 
@@ -625,10 +643,10 @@ router.post('/upload/:clientId', upload.single('file'), async (req, res) => {
 });
 
 // DELETE - Delete file from Cloudinary
-router.delete('/delete-file/:publicId', async (req, res) => {
+// Uses query param `publicId` (supports slashes like "clients/xxx/file")
+router.delete('/delete-file', async (req, res) => {
   try {
-    const { publicId } = req.params;
-    const { resourceType = 'image' } = req.query;
+    const { publicId, resourceType = 'image' } = req.query;
 
     if (!publicId) {
       return res.status(400).json({
@@ -647,15 +665,10 @@ router.delete('/delete-file/:publicId', async (req, res) => {
     const result = await new Promise((resolve, reject) => {
       cloudinary.uploader.destroy(
         decodedPublicId,
-        {
-          resource_type: resourceType
-        },
+        { resource_type: resourceType },
         (error, result) => {
-          if (error) {
-            reject(error);
-          } else {
-            resolve(result);
-          }
+          if (error) reject(error);
+          else resolve(result);
         }
       );
     });
@@ -686,7 +699,6 @@ router.delete('/delete-file/:publicId', async (req, res) => {
 
   } catch (error) {
     console.error('Delete file error:', error);
-
     return res.status(500).json({
       success: false,
       message: 'Failed to delete file',
@@ -716,17 +728,74 @@ router.delete('/remove-file/:clientId', async (req, res) => {
       });
     }
 
+    // ===== SERVICE-LEVEL REMOVAL =====
+    // field = "service.<serviceName>.<rowIndex>.<columnName>"
+    if (field.startsWith('service.')) {
+      const parts = field.split('.');
+      const serviceName = parts[1];
+      const rowIndex = parts[2];
+      const columnName = parts[3];
+
+      const metaKey = `${serviceName}|${rowIndex}|${columnName}`;
+      const flatKey = `${serviceName}-${rowIndex}-${columnName}`;
+
+      const meta = client.serviceUploadMeta?.get
+        ? client.serviceUploadMeta.get(metaKey)
+        : undefined;
+
+      const publicId = meta?.publicId;
+      const resourceType = meta?.resourceType || 'image';
+
+      // Delete from Cloudinary
+      if (publicId) {
+        try {
+          const result = await new Promise((resolve, reject) => {
+            cloudinary.uploader.destroy(
+              publicId,
+              { resource_type: resourceType },
+              (error, result) => {
+                if (error) reject(error);
+                else resolve(result);
+              }
+            );
+          });
+          console.log('Cloudinary service remove result:', result);
+        } catch (cloudErr) {
+          console.error('Cloudinary service deletion error:', cloudErr);
+          // Continue — we still want to clear MongoDB fields
+        }
+      }
+
+      // Clear MongoDB fields
+      if (client.serviceUploadMeta) {
+        client.serviceUploadMeta.delete(metaKey);
+      }
+      if (client.serviceUploads) {
+        client.serviceUploads.delete(flatKey);
+        client.serviceUploads.delete(`${flatKey}_type`);
+      }
+
+      await client.save();
+
+      const refreshed = await Client.findById(clientId);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Service file removed successfully',
+        data: refreshed
+      });
+    }
+
+    // ===== SIMPLE FIELD REMOVAL (pan, gst, msme, tan, authorisedPerson.*) =====
     let publicId;
     let resourceType;
 
     if (field.includes('.')) {
       const [parent, child] = field.split('.');
-
       const baseField = child.replace(/Upload$/, '');
 
       publicId = client[parent]?.[`${baseField}PublicId`];
       resourceType = client[parent]?.[`${baseField}ResourceType`] || 'image';
-
     } else {
       const baseField = field.replace(/Upload$/, '');
 
@@ -734,33 +803,24 @@ router.delete('/remove-file/:clientId', async (req, res) => {
       resourceType = client[`${baseField}ResourceType`] || 'image';
     }
 
-    // Delete from Cloudinary if publicId exists
     if (publicId) {
-      console.log('Removing Cloudinary file:', {
-        publicId,
-        resourceType
-      });
-
-      const result = await new Promise((resolve, reject) => {
-        cloudinary.uploader.destroy(
-          publicId,
-          {
-            resource_type: resourceType
-          },
-          (error, result) => {
-            if (error) {
-              reject(error);
-            } else {
-              resolve(result);
+      try {
+        const result = await new Promise((resolve, reject) => {
+          cloudinary.uploader.destroy(
+            publicId,
+            { resource_type: resourceType },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
             }
-          }
-        );
-      });
-
-      console.log('Cloudinary remove result:', result);
+          );
+        });
+        console.log('Cloudinary simple remove result:', result);
+      } catch (cloudErr) {
+        console.error('Cloudinary simple deletion error:', cloudErr);
+      }
     }
 
-    // Clear MongoDB fields
     const updateFields = {};
 
     if (field.includes('.')) {
@@ -771,7 +831,6 @@ router.delete('/remove-file/:clientId', async (req, res) => {
       updateFields[`${parent}.${baseField}Url`] = '';
       updateFields[`${parent}.${baseField}PublicId`] = '';
       updateFields[`${parent}.${baseField}ResourceType`] = '';
-
     } else {
       const baseField = field.replace(/Upload$/, '');
 
@@ -821,8 +880,6 @@ router.post('/:id/compliance-set', async (req, res) => {
       0
     );
 
-    // Calculate next version number
-    // If no history yet, seed Version 1 from current compliances
     if (!client.complianceHistory || client.complianceHistory.length === 0) {
       const initialCompliances = client.compliances || [];
       const initialTotal = initialCompliances.reduce(
@@ -841,20 +898,19 @@ router.post('/:id/compliance-set', async (req, res) => {
 
     const nextVersion = (client.complianceHistory?.length || 0) + 1;
 
-const currentBalanceSnapshot = client.balanceFee || 0;
+    const currentBalanceSnapshot = client.balanceFee || 0;
 
-client.complianceHistory = client.complianceHistory || [];
-client.complianceHistory.push({
-  version: nextVersion,
-  changedAt: new Date(),
-  compliances: compliances || [],
-  totalFee,
-  balanceFee: currentBalanceSnapshot,   // snapshot for history only
-  setBy: setBy || 'Admin'
-});
+    client.complianceHistory = client.complianceHistory || [];
+    client.complianceHistory.push({
+      version: nextVersion,
+      changedAt: new Date(),
+      compliances: compliances || [],
+      totalFee,
+      balanceFee: currentBalanceSnapshot,
+      setBy: setBy || 'Admin'
+    });
 
-// Update current compliances ONLY (balance untouched)
-client.compliances = compliances || [];
+    client.compliances = compliances || [];
 
     await client.save();
 
@@ -880,7 +936,6 @@ router.put('/:id/balance', async (req, res) => {
 
     client.balanceFee = Number(balanceFee) || 0;
 
-    // Also update the current (latest) history entry's balance so it reflects the change
     if (client.complianceHistory && client.complianceHistory.length > 0) {
       const latest = client.complianceHistory[client.complianceHistory.length - 1];
       latest.balanceFee = client.balanceFee;
@@ -907,7 +962,6 @@ router.get('/:id/compliance-history', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Client not found' });
     }
 
-    // Return most recent first
     const history = [...(client.complianceHistory || [])].reverse();
 
     res.status(200).json({
@@ -920,6 +974,118 @@ router.get('/:id/compliance-history', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching compliance history:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// ===== MARK ALL UPLOADS AS READ for a client =====
+router.put('/:id/read-uploads', async (req, res) => {
+  try {
+    const { uploadIds } = req.body;   // array of `${serviceName}-${rowIndex}-${columnName}`
+    const client = await Client.findById(req.params.id);
+    if (!client) {
+      return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+
+    // Keep the legacy array in sync (harmless, but stops old code from breaking)
+    const existing = client.readUploads || [];
+    const merged = Array.from(new Set([...existing, ...(uploadIds || [])]));
+    client.readUploads = merged;
+
+    // Record a read timestamp per upload
+    if (!client.uploadReadAt) client.uploadReadAt = new Map();
+    const now = new Date();
+    (uploadIds || []).forEach(id => {
+      client.uploadReadAt.set(id, now);
+    });
+
+    await client.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Uploads marked as read',
+      data: client
+    });
+  } catch (error) {
+    console.error('Error marking uploads read:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// ===== GET UNREAD UPLOAD COUNT across all clients =====
+router.get('/uploads/unread', async (req, res) => {
+  try {
+    const clients = await Client.find({ status: { $in: ['registered', 'active'] } })
+      .select('_id readUploads uploadReadAt');
+
+    const Status = (await import('../models/Status.js')).default;
+
+    const perClient = {};
+    let totalUnread = 0;
+
+    await Promise.all(clients.map(async (c) => {
+      const statuses = await Status.find({ clientId: c._id });
+
+      // Build a read-timestamp lookup from client.uploadReadAt
+      const readAtMap = new Map();
+      if (c.uploadReadAt && typeof c.uploadReadAt.forEach === 'function') {
+        c.uploadReadAt.forEach((ts, key) => {
+          if (ts) readAtMap.set(key, new Date(ts).getTime());
+        });
+      }
+      // Legacy fallback: IDs only in readUploads are treated as read long ago.
+      (c.readUploads || []).forEach(id => {
+        if (!readAtMap.has(id)) readAtMap.set(id, 0);
+      });
+
+      let unread = 0;
+
+      statuses.forEach(statusDoc => {
+        // statusDoc.updatedAt is the last time ANY change happened to this
+        // status doc — including a client upload. That's our upload timestamp.
+        const uploadedAtMs = statusDoc.updatedAt
+          ? new Date(statusDoc.updatedAt).getTime()
+          : (statusDoc.createdAt ? new Date(statusDoc.createdAt).getTime() : 0);
+
+        const servicesData = statusDoc.services instanceof Map
+          ? Object.fromEntries(statusDoc.services)
+          : (statusDoc.services || {});
+
+        Object.entries(servicesData).forEach(([serviceName, serviceData]) => {
+          const rowsData = serviceData.rows instanceof Map
+            ? Object.fromEntries(serviceData.rows)
+            : (serviceData.rows || {});
+
+          Object.entries(rowsData).forEach(([rowIndexStr, rowData]) => {
+            const rowIndex = parseInt(rowIndexStr);
+            const columnsData = rowData.columns instanceof Map
+              ? Object.fromEntries(rowData.columns)
+              : (rowData.columns || {});
+
+            Object.entries(columnsData).forEach(([columnName, columnData]) => {
+              if (columnData.fileUploaded && columnData.fileUrl) {
+                const uploadId = `${serviceName}-${rowIndex}-${columnName}`;
+                const readAtMs = readAtMap.get(uploadId) || 0;
+
+                if (uploadedAtMs > readAtMs) {
+                  unread++;
+                }
+              }
+            });
+          });
+        });
+      });
+
+      perClient[c._id] = unread;
+      totalUnread += unread;
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: { totalUnread, perClient }
+    });
+  } catch (error) {
+    console.error('Error computing unread uploads:', error);
     res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
