@@ -1090,4 +1090,42 @@ router.get('/uploads/unread', async (req, res) => {
   }
 });
 
+// ===== CLIENT SELF-SERVICE PASSWORD CHANGE (4-digit) =====
+// Called from the client portal. Only allows changing to a different 4-digit
+// numeric password. Does NOT require the old password (the tab is auth-guarded
+// by clientAuth/clientAuthTab, so only the logged-in client can reach it).
+router.put('/portal/:clientId/password', async (req, res) => {
+  try {
+    const { password } = req.body;
+
+    if (typeof password !== 'string' || !/^\d{4}$/.test(password)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be exactly 4 digits'
+      });
+    }
+
+    const client = await Client.findById(req.params.clientId);
+    if (!client) {
+      return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+
+    client.password = password;
+    await client.save();
+
+    // Keep localStorage clientData in sync so the client's session stays valid
+    const populated = await Client.findById(client._id)
+      .populate('careTaker', 'name email phone designation');
+
+    res.status(200).json({
+      success: true,
+      message: 'Password updated successfully',
+      data: populated
+    });
+  } catch (error) {
+    console.error('Error updating client password:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
 export default router;
