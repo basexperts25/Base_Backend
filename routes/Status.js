@@ -33,123 +33,61 @@ router.get('/client/:clientId/period/:period', async (req, res) => {
 router.post('/update', async (req, res) => {
   try {
     const {
-      clientId,
-      serviceName,
-      rowIndex,
-      period,
-      columnName,
-      color,
-      fileUploaded,
-      fileUrl,
-      filePublicId,
-      fileResourceType
+      clientId, serviceName, rowIndex, period, columnName,
+      color, fileUploaded, fileUrl, filePublicId, fileResourceType
     } = req.body;
 
-    console.log('📊 Status update request:', {
-      clientId,
-      serviceName,
-      rowIndex,
-      period,
-      columnName,
-      color
-    });
-
-    // Validate required fields
     if (!clientId || !serviceName || rowIndex === undefined || !period || !columnName) {
-      console.log('❌ Missing fields:', {
-        clientId,
-        serviceName,
-        rowIndex,
-        period,
-        columnName
-      });
-
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: clientId, serviceName, rowIndex, period, columnName'
+        message: 'Missing required fields'
       });
     }
 
-    // Check client exists
     const client = await Client.findById(clientId);
-    if (!client) {
-      return res.status(404).json({ success: false, message: 'Client not found' });
-    }
+    if (!client) return res.status(404).json({ success: false, message: 'Client not found' });
 
-    // Find or create the period document
     let status = await Status.findOne({ clientId, period });
-
     if (!status) {
-      console.log(`✅ Creating new status document for period: ${period}`);
-      status = new Status({
-        clientId,
-        period,
-        services: new Map()
-      });
+      status = new Status({ clientId, period, services: {} });
     }
 
-    // Ensure service exists
-    if (!status.services.has(serviceName)) {
-      console.log(`✅ Creating new service: ${serviceName} in period: ${period}`);
-      status.services.set(serviceName, {
-        rows: new Map()
-      });
-    }
-
-    const serviceData = status.services.get(serviceName);
-    
-    // Ensure row exists
     const rowKey = String(rowIndex);
-    if (!serviceData.rows.has(rowKey)) {
-      console.log(`✅ Creating new row: ${rowKey} for service: ${serviceName}`);
-      serviceData.rows.set(rowKey, {
-        columns: new Map()
-      });
-    }
 
-    const rowData = serviceData.rows.get(rowKey);
-    
-    // Update the specific column
-    const columnData = rowData.columns.get(columnName) || {};
-    if (color !== undefined) columnData.color = color;
-    if (fileUploaded !== undefined) columnData.fileUploaded = fileUploaded;
-    if (fileUrl !== undefined) columnData.fileUrl = fileUrl;
-    if (filePublicId !== undefined) columnData.filePublicId = filePublicId;
-    if (fileResourceType !== undefined) columnData.fileResourceType = fileResourceType;
-    
-    console.log(`✅ Updating column: ${columnName} with color: ${color}`);
-    rowData.columns.set(columnName, columnData);
-    serviceData.rows.set(rowKey, rowData);
-    status.services.set(serviceName, serviceData);
-    
-    await status.save();
-    console.log(`✅ Status saved successfully for period: ${period}`);
+    // Build the full nested path string
+    const basePath = `services.${serviceName}.rows.${rowKey}.columns.${columnName}`;
 
-    // Update client.serviceRows color
+    const setObj = {};
+    if (color !== undefined)             setObj[`${basePath}.color`] = color;
+    if (fileUploaded !== undefined)      setObj[`${basePath}.fileUploaded`] = fileUploaded;
+    if (fileUrl !== undefined)           setObj[`${basePath}.fileUrl`] = fileUrl;
+    if (filePublicId !== undefined)      setObj[`${basePath}.filePublicId`] = filePublicId;
+    if (fileResourceType !== undefined)  setObj[`${basePath}.fileResourceType`] = fileResourceType;
+
+    await Status.updateOne(
+      { clientId, period },
+      {
+        $set: setObj,
+        $setOnInsert: { clientId, period }
+      },
+      { upsert: true }
+    );
+
+    // Update client.serviceRows for quick access
     try {
       const updatePath = `serviceRows.${serviceName}.${parseInt(rowIndex)}.data.${columnName}`;
       await Client.findByIdAndUpdate(
         clientId,
         { $set: { [updatePath]: color || 'white' } }
       );
-      console.log(`✅ Client.serviceRows updated: ${updatePath} = ${color}`);
     } catch (updateError) {
-      console.error('❌ Error updating client.serviceRows:', updateError);
+      console.error('Error updating client.serviceRows:', updateError);
     }
 
-    res.status(200).json({
-      success: true,
-      message: 'Status updated successfully',
-      data: status
-    });
-
+    res.status(200).json({ success: true, message: 'Status updated successfully' });
   } catch (error) {
     console.error('❌ Error updating status:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
@@ -158,54 +96,32 @@ router.delete('/file/:clientId/:period/:serviceName/:rowIndex/:columnName', asyn
   try {
     const { clientId, period, serviceName, rowIndex, columnName } = req.params;
 
-    const status = await Status.findOne({ clientId, period });
-    if (!status) {
-      return res.status(404).json({ success: false, message: 'Status not found' });
-    }
+    const basePath = `services.${serviceName}.rows.${String(rowIndex)}.columns.${columnName}`;
 
-    // Reset the column
-    if (status.services.has(serviceName)) {
-      const serviceData = status.services.get(serviceName);
-      const rowKey = String(rowIndex);
-      if (serviceData.rows.has(rowKey)) {
-        const rowData = serviceData.rows.get(rowKey);
-        rowData.columns.set(columnName, {
-          color: 'white',
-          fileUploaded: false,
-          fileUrl: '',
-          filePublicId: '',
-          fileResourceType: ''
-        });
-        serviceData.rows.set(rowKey, rowData);
-        status.services.set(serviceName, serviceData);
-        await status.save();
+    await Status.updateOne(
+      { clientId, period },
+      {
+        $set: {
+          [`${basePath}.color`]: 'white',
+          [`${basePath}.fileUploaded`]: false,
+          [`${basePath}.fileUrl`]: '',
+          [`${basePath}.filePublicId`]: '',
+          [`${basePath}.fileResourceType`]: ''
+        }
       }
-    }
+    );
 
-    // Update client.serviceRows
     try {
       const updatePath = `serviceRows.${serviceName}.${parseInt(rowIndex)}.data.${columnName}`;
-      await Client.findByIdAndUpdate(
-        clientId,
-        { $set: { [updatePath]: 'white' } }
-      );
+      await Client.findByIdAndUpdate(clientId, { $set: { [updatePath]: 'white' } });
     } catch (updateError) {
       console.error('Error updating client.serviceRows:', updateError);
     }
 
-    res.status(200).json({
-      success: true,
-      message: 'File removed successfully',
-      data: status
-    });
-
+    res.status(200).json({ success: true, message: 'File removed successfully' });
   } catch (error) {
     console.error('Error removing file:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
@@ -225,6 +141,52 @@ router.delete('/period/:clientId/:period', async (req, res) => {
       message: 'Server error',
       error: error.message
     });
+  }
+});
+
+// POST - Batch update multiple cells
+router.post('/update-batch', async (req, res) => {
+  try {
+    const { clientId, updates } = req.body;
+
+    if (!clientId || !Array.isArray(updates) || updates.length === 0) {
+      return res.status(400).json({ success: false, message: 'Missing clientId or updates' });
+    }
+
+    const client = await Client.findById(clientId);
+    if (!client) return res.status(404).json({ success: false, message: 'Client not found' });
+
+    // Group by period
+    const byPeriod = new Map();
+    for (const u of updates) {
+      if (!byPeriod.has(u.period)) byPeriod.set(u.period, []);
+      byPeriod.get(u.period).push(u);
+    }
+
+    for (const [period, periodUpdates] of byPeriod.entries()) {
+      const setObj = {};
+
+      for (const u of periodUpdates) {
+        const { serviceName, rowIndex, columnName, color } = u;
+        const rowKey = String(rowIndex);
+        const path = `services.${serviceName}.rows.${rowKey}.columns.${columnName}.color`;
+        setObj[path] = color;
+      }
+
+      await Status.updateOne(
+        { clientId, period },
+        {
+          $set: setObj,
+          $setOnInsert: { clientId, period }
+        },
+        { upsert: true }
+      );
+    }
+
+    res.status(200).json({ success: true, message: 'Batch status updated' });
+  } catch (error) {
+    console.error('❌ Batch update error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 

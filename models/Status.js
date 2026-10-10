@@ -1,5 +1,33 @@
-// server/models/Status.js - ULTIMATE OPTIMIZED VERSION (1 doc per month)
+// server/models/Status.js
 import mongoose from 'mongoose';
+
+const columnSchema = new mongoose.Schema({
+  color: {
+    type: String,
+    enum: ['white', 'yellow', 'red', 'green'],
+    default: 'white'
+  },
+  fileUploaded: { type: Boolean, default: false },
+  fileUrl: { type: String, default: '' },
+  filePublicId: { type: String, default: '' },
+  fileResourceType: { type: String, default: '' }
+}, { _id: false, minimize: false });
+
+const rowSchema = new mongoose.Schema({
+  columns: {
+    type: Map,
+    of: columnSchema,
+    default: {}
+  }
+}, { _id: false, minimize: false });
+
+const serviceSchema = new mongoose.Schema({
+  rows: {
+    type: Map,
+    of: rowSchema,
+    default: {}
+  }
+}, { _id: false, minimize: false });
 
 const statusSchema = new mongoose.Schema({
   clientId: {
@@ -11,56 +39,16 @@ const statusSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  // All services in one document
   services: {
     type: Map,
-    of: {
-      // Each service has rows
-      rows: {
-        type: Map,
-        of: {
-          // Each row has columns
-          columns: {
-            type: Map,
-            of: {
-              color: {
-                type: String,
-                enum: ['white', 'yellow', 'red', 'green'],
-                default: 'white'
-              },
-              fileUploaded: {
-                type: Boolean,
-                default: false
-              },
-              fileUrl: {
-                type: String,
-                default: ''
-              },
-              filePublicId: {
-                type: String,
-                default: ''
-              },
-              fileResourceType: {
-                type: String,
-                default: ''
-              }
-            },
-            default: {}
-          }
-        },
-        default: {}
-      }
-    },
+    of: serviceSchema,
     default: {}
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  minimize: false
 });
 
-// Compound unique index to ensure one document per client per period
-statusSchema.index(
-  { clientId: 1, period: 1 },
-  { unique: true }
-);
+statusSchema.index({ clientId: 1, period: 1 }, { unique: true });
 
 export default mongoose.model('Status', statusSchema);
