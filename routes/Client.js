@@ -5,11 +5,13 @@ import CareTaker from '../models/ClientHandlers.js';
 import multer from 'multer';
 import { v2 as cloudinary } from 'cloudinary';
 import dotenv from 'dotenv';
+import bcrypt from 'bcryptjs';
+import { verifyToken, requireRole, signToken } from '../middleware/auth.js';
 
-// Load environment variables
+const DEFAULT_PASSWORD = '1234';
+
 dotenv.config();
 
-// Configure Cloudinary using environment variables
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -25,27 +27,216 @@ console.log('Cloudinary configured with:', {
 
 const router = express.Router();
 
-// Configure multer for memory storage
 const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/gif', 'application/pdf'];
-    if (allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Invalid file type. Only JPEG, PNG, JPG, GIF, and PDF are allowed.'));
-    }
+    if (allowedTypes.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Invalid file type. Only JPEG, PNG, JPG, GIF, and PDF are allowed.'));
   }
 });
 
-// ===== CARE TAKER ROUTES =====
+// ============================================================
+// ===== AUTH ROUTES =====
+// ============================================================
 
-// GET all caretakers
-router.get('/caretakers', async (req, res) => {
+// POST - Login (superadmin / admin / clienthandler)
+router.post('/auth/login', async (req, res) => {
   try {
-    const caretakers = await CareTaker.find({ isActive: true });
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ success: false, message: 'Username and password required' });
+    }
+
+    const input = username.trim();
+
+    // Search by username OR phone
+    const user = await CareTaker.findOne({
+      $or: [{ username: input }, { phone: input }]
+    });
+    if (!user || !user.password) {
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    }
+
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok) {
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    }
+
+    if (!user.isActive) {
+      return res.status(403).json({ success: false, message: 'Account disabled' });
+    }
+
+    const token = signToken({
+      _id: user._id,
+      role: user.role,
+      name: user.name,
+      username: user.username
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      data: {
+        token,
+        user: {
+          _id: user._id,
+          name: user.name,
+          phone: user.phone,
+          username: user.username,
+          role: user.role,
+          isDefaultPassword: user.isDefaultPassword !== false
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// PUT - Change own password
+router.put('/auth/change-password', verifyToken, async (req, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Old and new password required' });
+    }
+    if (String(newPassword).length < 4) {
+      return res.status(400).json({ success: false, message: 'New password must be at least 4 characters' });
+    }
+
+    const user = await CareTaker.findById(req.user._id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const ok = await bcrypt.compare(oldPassword, user.password);
+    if (!ok) return res.status(401).json({ success: false, message: 'Old password is incorrect' });
+
+    user.password = await bcrypt.hash(String(newPassword), 10);
+    user.isDefaultPassword = false;   
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Password updated successfully',
+      data: { isDefaultPassword: false }
+    });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// ============================================================
+// ===== UPDATE OWN PROFILE (self-edit: name, phone, username) =====
+// ============================================================
+router.put('/auth/update-profile', verifyToken, async (req, res) => {
+  try {
+    const { name, phone, username } = req.body;
+    const user = await CareTaker.findById(req.user._id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    // ---- name ----
+    if (name !== undefined && name.trim()) user.name = name.trim();
+
+    // ---- phone ----
+    if (phone !== undefined && phone.trim() !== user.phone) {
+      const existing = await CareTaker.findOne({
+        phone: phone.trim(),
+        _id: { $ne: user._id }
+      });
+      if (existing) {
+        return res.status(400).json({ success: false, message: 'Phone already in use' });
+      }
+      user.phone = phone.trim();
+    }
+
+    // ---- username ----
+    if (username !== undefined && username.trim() !== user.username) {
+      const existing = await CareTaker.findOne({
+        username: username.trim(),
+        _id: { $ne: user._id }
+      });
+      if (existing) {
+        return res.status(400).json({ success: false, message: 'Username already in use' });
+      }
+      user.username = username.trim();
+    }
+
+    // NOTE: clientSupportNumber NOT editable by user themselves
+
+    await user.save();
+
+    const safe = user.toObject();
+    delete safe.password;
+
+    // Refresh token if phone/username changed
+    const token = signToken({
+      _id: user._id,
+      role: user.role,
+      name: user.name,
+      username: user.username
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated',
+      data: {
+        token,
+        user: {
+          _id: safe._id,
+          name: safe.name,
+          phone: safe.phone,
+          username: safe.username,
+          role: safe.role,
+          clientSupportNumber: safe.clientSupportNumber || '',
+          isDefaultPassword: safe.isDefaultPassword !== false
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error updating profile:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// GET - current user profile
+router.get('/auth/me', verifyToken, async (req, res) => {
+  try {
+    const user = await CareTaker.findById(req.user._id).select('-password');
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    res.status(200).json({
+      success: true,
+      data: {
+        _id: user._id,
+        name: user.name,
+        phone: user.phone,
+        username: user.username,
+        role: user.role,
+        isDefaultPassword: user.isDefaultPassword !== false
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// ============================================================
+// ===== CARE TAKER ROUTES =====
+// ============================================================
+
+// GET all caretakers (role-based)
+router.get('/caretakers', verifyToken, async (req, res) => {
+  try {
+    if (req.user.role === 'clienthandler') {
+      const self = await CareTaker.findById(req.user._id).select('-password');
+      return res.status(200).json({ success: true, data: self ? [self] : [] });
+    }
+
+    const caretakers = await CareTaker.find({ isActive: true }).select('-password');
     res.status(200).json({ success: true, data: caretakers });
   } catch (error) {
     console.error('Error fetching caretakers:', error);
@@ -53,107 +244,160 @@ router.get('/caretakers', async (req, res) => {
   }
 });
 
-// POST - Create new caretaker
-router.post('/caretakers', async (req, res) => {
+// POST - Create new staff
+// POST - Create new staff (password auto-set to DEFAULT_PASSWORD = 1234)
+router.post('/caretakers', verifyToken, requireRole('superadmin', 'admin'), async (req, res) => {
   try {
-    const { name, phone, designation } = req.body;
+    const { name, phone, role, clientSupportNumber, username: customUsername } = req.body;
 
-    if (!name || !phone) {
-      return res.status(400).json({
-        success: false,
-        message: 'Name and phone are required'
-      });
+    if (!name || !phone || !role) {
+      return res.status(400).json({ success: false, message: 'Name, phone, role required' });
     }
 
-    const existingHandler = await CareTaker.findOne({ phone });
-    if (existingHandler) {
-      return res.status(400).json({
-        success: false,
-        message: 'Phone number already registered'
-      });
+    if (role === 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({ success: false, message: 'Only Super Admin can add Admin' });
+    }
+    if (role === 'superadmin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({ success: false, message: 'Only Super Admin can add Super Admin' });
+    }
+    if (!['superadmin', 'admin', 'clienthandler'].includes(role)) {
+      return res.status(400).json({ success: false, message: 'Invalid role' });
     }
 
-    const careTaker = new CareTaker({
-      name,
-      phone,
-      designation: designation || '',
+    // Default username = phone, but superadmin/admin can set custom
+    const username = (customUsername && customUsername.trim()) || phone.trim();
+
+    const existing = await CareTaker.findOne({
+      $or: [
+        { phone: phone.trim() },
+        { username: username }
+      ]
+    });
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'Phone or username already exists' });
+    }
+
+    // Default password for every new user
+    const hashed = await bcrypt.hash(DEFAULT_PASSWORD, 10);
+
+    const created = new CareTaker({
+      name: name.trim(),
+      phone: phone.trim(),
+      username,
+      clientSupportNumber: clientSupportNumber || '',
+      password: hashed,
+      isDefaultPassword: true,
+      role,
       isActive: true
     });
 
-    await careTaker.save();
-    res.status(201).json({
-      success: true,
-      message: 'Care taker added successfully',
-      data: careTaker
-    });
+    await created.save();
+
+    const safe = created.toObject();
+    delete safe.password;
+
+    res.status(201).json({ success: true, message: 'Staff added successfully', data: safe });
   } catch (error) {
-    console.error('Error creating care taker:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    console.error('Error creating staff:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
-// PUT - Update caretaker
-router.put('/caretakers/:id', async (req, res) => {
+// PUT - Update staff
+router.put('/caretakers/:id', verifyToken, requireRole('superadmin', 'admin'), async (req, res) => {
   try {
-    const { name, phone, designation } = req.body;
+    const target = await CareTaker.findById(req.params.id);
+    if (!target) return res.status(404).json({ success: false, message: 'User not found' });
 
-    const careTaker = await CareTaker.findByIdAndUpdate(
-      req.params.id,
-      { name, phone, designation },
-      { new: true, runValidators: true }
-    );
+    const isSuperAdmin = req.user.role === 'superadmin';
+    const isAdmin = req.user.role === 'admin';
 
-    if (!careTaker) {
-      return res.status(404).json({
-        success: false,
-        message: 'Care taker not found'
-      });
+    // Admin can only edit Client Handlers (not other admins or superadmin)
+    if (isAdmin && target.role !== 'clienthandler') {
+      return res.status(403).json({ success: false, message: 'Admin can only edit Client Handlers' });
     }
 
-    res.status(200).json({
-      success: true,
-      message: 'Care taker updated successfully',
-      data: careTaker
-    });
-  } catch (error) {
-    console.error('Error updating care taker:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
-  }
-});
+    const { name, phone, username, clientSupportNumber, role } = req.body;
 
-// DELETE - Delete caretaker
-router.delete('/caretakers/:id', async (req, res) => {
-  try {
-    const careTaker = await CareTaker.findByIdAndDelete(req.params.id);
-    if (!careTaker) {
-      return res.status(404).json({
-        success: false,
-        message: 'Care taker not found'
+    // ---- name ----
+    if (name !== undefined) target.name = name.trim();
+
+    // ---- phone ----
+    if (phone !== undefined && phone.trim() !== target.phone) {
+      const existing = await CareTaker.findOne({
+        phone: phone.trim(),
+        _id: { $ne: target._id }
       });
+      if (existing) {
+        return res.status(400).json({ success: false, message: 'Phone already in use' });
+      }
+      target.phone = phone.trim();
     }
-    res.status(200).json({
-      success: true,
-      message: 'Care taker deleted successfully'
-    });
+
+    // ---- username ----
+    if (username !== undefined && username.trim() !== target.username) {
+      const existing = await CareTaker.findOne({
+        username: username.trim(),
+        _id: { $ne: target._id }
+      });
+      if (existing) {
+        return res.status(400).json({ success: false, message: 'Username already in use' });
+      }
+      target.username = username.trim();
+    }
+
+    // ---- clientSupportNumber ---- (superadmin + admin only)
+    if (clientSupportNumber !== undefined) {
+      target.clientSupportNumber = clientSupportNumber;
+    }
+
+    // ---- role ---- (superadmin only)
+    if (role !== undefined && role !== target.role) {
+      if (!isSuperAdmin) {
+        return res.status(403).json({ success: false, message: 'Only Super Admin can change role' });
+      }
+      if (!['superadmin', 'admin', 'clienthandler'].includes(role)) {
+        return res.status(400).json({ success: false, message: 'Invalid role' });
+      }
+      target.role = role;
+    }
+
+    await target.save();
+
+    const safe = target.toObject();
+    delete safe.password;
+    res.status(200).json({ success: true, message: 'Staff updated', data: safe });
   } catch (error) {
-    console.error('Error deleting care taker:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    console.error('Error updating staff:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
+// DELETE - Delete staff
+router.delete('/caretakers/:id', verifyToken, requireRole('superadmin', 'admin'), async (req, res) => {
+  try {
+    const target = await CareTaker.findById(req.params.id);
+    if (!target) return res.status(404).json({ success: false, message: 'User not found' });
+
+    if (target.role === 'superadmin') {
+      return res.status(403).json({ success: false, message: 'Super Admin cannot be deleted' });
+    }
+
+    if (req.user.role === 'admin' && target.role !== 'clienthandler') {
+      return res.status(403).json({ success: false, message: 'Admin can only delete Client Handlers' });
+    }
+
+    await CareTaker.findByIdAndDelete(req.params.id);
+    res.status(200).json({ success: true, message: 'Deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting staff:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// ============================================================
 // ===== CLIENT REGISTRATION ROUTES =====
+// ============================================================
 
 router.post('/register', async (req, res) => {
   try {
@@ -198,7 +442,7 @@ router.post('/register', async (req, res) => {
 router.get('/pending', async (req, res) => {
   try {
     const clients = await Client.find({ status: 'pending' })
-      .populate('careTaker', 'name email phone designation')
+      .populate('careTaker', 'name email phone role')
       .sort({ createdAt: -1 });
     res.status(200).json({ success: true, count: clients.length, data: clients });
   } catch (error) {
@@ -207,10 +451,17 @@ router.get('/pending', async (req, res) => {
   }
 });
 
-router.get('/registered', async (req, res) => {
+// GET registered clients (role-based filter)
+router.get('/registered', verifyToken, async (req, res) => {
   try {
-    const clients = await Client.find({ status: { $in: ['registered', 'active'] } })
-      .populate('careTaker', 'name email phone designation')
+    let filter = { status: { $in: ['registered', 'active'] } };
+
+    if (req.user.role === 'clienthandler') {
+      filter.careTaker = req.user._id;
+    }
+
+    const clients = await Client.find(filter)
+      .populate('careTaker', 'name email phone role')
       .sort({ registeredAt: -1 });
     res.status(200).json({ success: true, count: clients.length, data: clients });
   } catch (error) {
@@ -219,7 +470,7 @@ router.get('/registered', async (req, res) => {
   }
 });
 
-// ===== UPDATE CLIENT ROUTE =====
+// ===== UPDATE CLIENT =====
 router.put('/:id', async (req, res) => {
   try {
     const updates = req.body;
@@ -242,12 +493,8 @@ router.put('/:id', async (req, res) => {
     const client = await Client.findByIdAndUpdate(
       req.params.id,
       { $set: updates },
-      {
-        new: true,
-        runValidators: false,
-        context: 'query'
-      }
-    ).populate('careTaker', 'name email phone designation');
+      { new: true, runValidators: false, context: 'query' }
+    ).populate('careTaker', 'name email phone role');
 
     if (!client) {
       return res.status(404).json({ success: false, message: 'Client not found' });
@@ -285,11 +532,8 @@ router.put('/:id/statutory', async (req, res) => {
     const client = await Client.findByIdAndUpdate(
       req.params.id,
       { $set: updateData },
-      {
-        new: true,
-        runValidators: false
-      }
-    ).populate('careTaker', 'name email phone designation');
+      { new: true, runValidators: false }
+    ).populate('careTaker', 'name email phone role');
 
     if (!client) {
       return res.status(404).json({ success: false, message: 'Client not found' });
@@ -305,7 +549,7 @@ router.put('/:id/statutory', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const client = await Client.findById(req.params.id)
-      .populate('careTaker', 'name email phone designation');
+      .populate('careTaker', 'name email phone role');
     if (!client) {
       return res.status(404).json({ success: false, message: 'Client not found' });
     }
@@ -347,7 +591,7 @@ router.put('/:id/approve', async (req, res) => {
     await client.save();
 
     const populated = await Client.findById(client._id)
-      .populate('careTaker', 'name email phone designation');
+      .populate('careTaker', 'name email phone role');
 
     res.status(200).json({
       success: true,
@@ -378,7 +622,8 @@ router.put('/:id/password', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+// DELETE client (superadmin + admin only)
+router.delete('/:id', verifyToken, requireRole('superadmin', 'admin'), async (req, res) => {
   try {
     const client = await Client.findByIdAndDelete(req.params.id);
     if (!client) {
@@ -402,7 +647,7 @@ router.post('/login', async (req, res) => {
     const client = await Client.findOne({
       username: trimmedUsername,
       status: { $in: ['registered', 'active'] }
-    }).populate('careTaker', 'name email phone designation');
+    }).populate('careTaker', 'name email phone role');
     if (!client) {
       return res.status(401).json({ success: false, message: 'Invalid credentials or account not activated' });
     }
@@ -419,7 +664,7 @@ router.post('/login', async (req, res) => {
 router.get('/portal/:clientId', async (req, res) => {
   try {
     const client = await Client.findById(req.params.clientId)
-      .populate('careTaker', 'name email phone designation');
+      .populate('careTaker', 'name email phone role');
     if (!client) {
       return res.status(404).json({ success: false, message: 'Client not found' });
     }
@@ -499,7 +744,9 @@ router.get('/portal/:clientId/service/:serviceName', async (req, res) => {
   }
 });
 
+// ============================================================
 // ===== UPLOAD ROUTES =====
+// ============================================================
 
 router.post('/upload/:clientId', upload.single('file'), async (req, res) => {
   try {
@@ -508,26 +755,15 @@ router.post('/upload/:clientId', upload.single('file'), async (req, res) => {
     const file = req.file;
 
     if (!file) {
-      return res.status(400).json({
-        success: false,
-        message: 'No file uploaded'
-      });
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
     }
-
     if (!field) {
-      return res.status(400).json({
-        success: false,
-        message: 'Field is required'
-      });
+      return res.status(400).json({ success: false, message: 'Field is required' });
     }
 
     const client = await Client.findById(clientId);
-
     if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
+      return res.status(404).json({ success: false, message: 'Client not found' });
     }
 
     const isPdf = file.mimetype === 'application/pdf';
@@ -543,21 +779,16 @@ router.post('/upload/:clientId', upload.single('file'), async (req, res) => {
           access_mode: 'public'
         },
         (error, result) => {
-          if (error) {
-            reject(error);
-          } else {
-            resolve(result);
-          }
+          if (error) reject(error);
+          else resolve(result);
         }
       );
-
       uploadStream.end(file.buffer);
     });
 
-    // ===== SERVICE-LEVEL UPLOADS (e.g. "service.Books of Accounts(Tally).0.Sales") =====
+    // ===== SERVICE-LEVEL UPLOADS =====
     if (field.startsWith('service.')) {
       const parts = field.split('.');
-      // parts: ["service", serviceName, rowIndex, columnName]
       const serviceName = parts[1];
       const rowIndex = parts[2];
       const columnName = parts[3];
@@ -565,7 +796,6 @@ router.post('/upload/:clientId', upload.single('file'), async (req, res) => {
       const metaKey = `${serviceName}|${rowIndex}|${columnName}`;
       const flatKey = `${serviceName}-${rowIndex}-${columnName}`;
 
-      // Ensure maps exist
       if (!client.serviceUploadMeta) client.serviceUploadMeta = new Map();
       if (!client.serviceUploads) client.serviceUploads = new Map();
 
@@ -594,7 +824,7 @@ router.post('/upload/:clientId', upload.single('file'), async (req, res) => {
       });
     }
 
-    // ===== SIMPLE FIELD UPLOADS (pan, gst, msme, tan, authorisedPerson.*) =====
+    // ===== SIMPLE FIELD UPLOADS =====
     const updateFields = {};
 
     if (field.includes('.')) {
@@ -633,7 +863,6 @@ router.post('/upload/:clientId', upload.single('file'), async (req, res) => {
 
   } catch (error) {
     console.error('Upload error:', error);
-
     return res.status(500).json({
       success: false,
       message: 'File upload failed',
@@ -642,17 +871,12 @@ router.post('/upload/:clientId', upload.single('file'), async (req, res) => {
   }
 });
 
-// DELETE - Delete file from Cloudinary
-// Uses query param `publicId` (supports slashes like "clients/xxx/file")
 router.delete('/delete-file', async (req, res) => {
   try {
     const { publicId, resourceType = 'image' } = req.query;
 
     if (!publicId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Public ID is required'
-      });
+      return res.status(400).json({ success: false, message: 'Public ID is required' });
     }
 
     const decodedPublicId = decodeURIComponent(publicId);
@@ -713,23 +937,15 @@ router.delete('/remove-file/:clientId', async (req, res) => {
     const { field } = req.query;
 
     if (!field) {
-      return res.status(400).json({
-        success: false,
-        message: 'Field is required'
-      });
+      return res.status(400).json({ success: false, message: 'Field is required' });
     }
 
     const client = await Client.findById(clientId);
-
     if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
+      return res.status(404).json({ success: false, message: 'Client not found' });
     }
 
     // ===== SERVICE-LEVEL REMOVAL =====
-    // field = "service.<serviceName>.<rowIndex>.<columnName>"
     if (field.startsWith('service.')) {
       const parts = field.split('.');
       const serviceName = parts[1];
@@ -746,7 +962,6 @@ router.delete('/remove-file/:clientId', async (req, res) => {
       const publicId = meta?.publicId;
       const resourceType = meta?.resourceType || 'image';
 
-      // Delete from Cloudinary
       if (publicId) {
         try {
           const result = await new Promise((resolve, reject) => {
@@ -762,11 +977,9 @@ router.delete('/remove-file/:clientId', async (req, res) => {
           console.log('Cloudinary service remove result:', result);
         } catch (cloudErr) {
           console.error('Cloudinary service deletion error:', cloudErr);
-          // Continue — we still want to clear MongoDB fields
         }
       }
 
-      // Clear MongoDB fields
       if (client.serviceUploadMeta) {
         client.serviceUploadMeta.delete(metaKey);
       }
@@ -786,7 +999,7 @@ router.delete('/remove-file/:clientId', async (req, res) => {
       });
     }
 
-    // ===== SIMPLE FIELD REMOVAL (pan, gst, msme, tan, authorisedPerson.*) =====
+    // ===== SIMPLE FIELD REMOVAL =====
     let publicId;
     let resourceType;
 
@@ -843,10 +1056,7 @@ router.delete('/remove-file/:clientId', async (req, res) => {
     const updatedClient = await Client.findByIdAndUpdate(
       clientId,
       { $set: updateFields },
-      {
-        new: true,
-        runValidators: false
-      }
+      { new: true, runValidators: false }
     );
 
     return res.status(200).json({
@@ -857,7 +1067,6 @@ router.delete('/remove-file/:clientId', async (req, res) => {
 
   } catch (error) {
     console.error('Remove file error:', error);
-
     return res.status(500).json({
       success: false,
       message: 'Failed to remove file',
@@ -866,7 +1075,7 @@ router.delete('/remove-file/:clientId', async (req, res) => {
   }
 });
 
-// ===== SET COMPLIANCE HISTORY (save current selection as new version) =====
+// ===== SET COMPLIANCE HISTORY =====
 router.post('/:id/compliance-set', async (req, res) => {
   try {
     const { compliances, balanceFee, setBy } = req.body;
@@ -925,7 +1134,6 @@ router.post('/:id/compliance-set', async (req, res) => {
   }
 });
 
-// ===== UPDATE BALANCE FEE ONLY (independent from compliance) =====
 router.put('/:id/balance', async (req, res) => {
   try {
     const { balanceFee } = req.body;
@@ -954,7 +1162,6 @@ router.put('/:id/balance', async (req, res) => {
   }
 });
 
-// ===== GET COMPLIANCE HISTORY =====
 router.get('/:id/compliance-history', async (req, res) => {
   try {
     const client = await Client.findById(req.params.id).select('complianceHistory balanceFee compliances');
@@ -978,21 +1185,18 @@ router.get('/:id/compliance-history', async (req, res) => {
   }
 });
 
-// ===== MARK ALL UPLOADS AS READ for a client =====
 router.put('/:id/read-uploads', async (req, res) => {
   try {
-    const { uploadIds } = req.body;   // array of `${serviceName}-${rowIndex}-${columnName}`
+    const { uploadIds } = req.body;
     const client = await Client.findById(req.params.id);
     if (!client) {
       return res.status(404).json({ success: false, message: 'Client not found' });
     }
 
-    // Keep the legacy array in sync (harmless, but stops old code from breaking)
     const existing = client.readUploads || [];
     const merged = Array.from(new Set([...existing, ...(uploadIds || [])]));
     client.readUploads = merged;
 
-    // Record a read timestamp per upload
     if (!client.uploadReadAt) client.uploadReadAt = new Map();
     const now = new Date();
     (uploadIds || []).forEach(id => {
@@ -1012,7 +1216,6 @@ router.put('/:id/read-uploads', async (req, res) => {
   }
 });
 
-// ===== GET UNREAD UPLOAD COUNT across all clients =====
 router.get('/uploads/unread', async (req, res) => {
   try {
     const clients = await Client.find({ status: { $in: ['registered', 'active'] } })
@@ -1026,14 +1229,12 @@ router.get('/uploads/unread', async (req, res) => {
     await Promise.all(clients.map(async (c) => {
       const statuses = await Status.find({ clientId: c._id });
 
-      // Build a read-timestamp lookup from client.uploadReadAt
       const readAtMap = new Map();
       if (c.uploadReadAt && typeof c.uploadReadAt.forEach === 'function') {
         c.uploadReadAt.forEach((ts, key) => {
           if (ts) readAtMap.set(key, new Date(ts).getTime());
         });
       }
-      // Legacy fallback: IDs only in readUploads are treated as read long ago.
       (c.readUploads || []).forEach(id => {
         if (!readAtMap.has(id)) readAtMap.set(id, 0);
       });
@@ -1041,8 +1242,6 @@ router.get('/uploads/unread', async (req, res) => {
       let unread = 0;
 
       statuses.forEach(statusDoc => {
-        // statusDoc.updatedAt is the last time ANY change happened to this
-        // status doc — including a client upload. That's our upload timestamp.
         const uploadedAtMs = statusDoc.updatedAt
           ? new Date(statusDoc.updatedAt).getTime()
           : (statusDoc.createdAt ? new Date(statusDoc.createdAt).getTime() : 0);
@@ -1090,10 +1289,6 @@ router.get('/uploads/unread', async (req, res) => {
   }
 });
 
-// ===== CLIENT SELF-SERVICE PASSWORD CHANGE (4-digit) =====
-// Called from the client portal. Only allows changing to a different 4-digit
-// numeric password. Does NOT require the old password (the tab is auth-guarded
-// by clientAuth/clientAuthTab, so only the logged-in client can reach it).
 router.put('/portal/:clientId/password', async (req, res) => {
   try {
     const { password } = req.body;
@@ -1113,9 +1308,8 @@ router.put('/portal/:clientId/password', async (req, res) => {
     client.password = password;
     await client.save();
 
-    // Keep localStorage clientData in sync so the client's session stays valid
     const populated = await Client.findById(client._id)
-      .populate('careTaker', 'name email phone designation');
+      .populate('careTaker', 'name email phone role');
 
     res.status(200).json({
       success: true,
@@ -1127,5 +1321,41 @@ router.put('/portal/:clientId/password', async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
+
+// ============================================================
+// ===== RESET PASSWORD (Super Admin / Admin only) =====
+// ============================================================
+router.post('/caretakers/:id/reset-password', verifyToken, requireRole('superadmin', 'admin'), async (req, res) => {
+  try {
+    const target = await CareTaker.findById(req.params.id);
+    if (!target) return res.status(404).json({ success: false, message: 'User not found' });
+
+    // Nobody can reset superadmin except the superadmin himself
+    if (target.role === 'superadmin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({ success: false, message: 'Cannot reset Super Admin password' });
+    }
+
+    // Admin can only reset clienthandler
+    if (req.user.role === 'admin' && target.role !== 'clienthandler') {
+      return res.status(403).json({ success: false, message: 'Admin can only reset Client Handler passwords' });
+    }
+
+    // Reset to default 1234
+    target.password = await bcrypt.hash(DEFAULT_PASSWORD, 10);
+    target.isDefaultPassword = true;
+    await target.save();
+
+    res.status(200).json({
+      success: true,
+      message: `Password reset to ${DEFAULT_PASSWORD}`,
+      data: { isDefaultPassword: true }
+    });
+  } catch (error) {
+    console.error('Error resetting password:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+
 
 export default router;

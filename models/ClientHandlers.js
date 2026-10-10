@@ -12,9 +12,30 @@ const clientHandlerSchema = new mongoose.Schema({
     required: [true, 'Phone number is required'],
     trim: true
   },
-  designation: {
+  username: {
     type: String,
+    unique: true,
+    sparse: true,
+    trim: true,
+    default: null
+  },
+  clientSupportNumber: {
+    type: String,
+    trim: true,
     default: ''
+  },
+  password: {
+    type: String,
+    default: null
+  },
+  isDefaultPassword: {
+    type: Boolean,
+    default: true
+  },
+  role: {
+    type: String,
+    enum: ['superadmin', 'admin', 'clienthandler'],
+    default: 'clienthandler'
   },
   isActive: {
     type: Boolean,
